@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.1.7 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.1.8 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -293,6 +293,7 @@ tr.row-link { cursor: pointer; }
     font-size: 11px; font-weight: 700; white-space: nowrap; line-height: 1.7;
 }
 .pill-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.pill-glyph { gap: 5px; }
 .pill-gray   { background: #f1f5f9; color: #475569; }
 .pill-blue   { background: var(--primary-light); color: var(--primary-dark); }
 .pill-green  { background: var(--success-light); color: #047857; }
@@ -388,11 +389,12 @@ tr.row-link { cursor: pointer; }
     border: 1.5px solid var(--border); background: var(--card); color: var(--text-muted);
     transition: border-color .15s, color .15s, background .15s;
 }
-.tchip .tchip-dot { width: 8px; height: 8px; border-radius: 3px; background: var(--border); flex-shrink: 0; }
+.node-glyph { flex-shrink: 0; display: block; }
+.tchip .node-glyph { color: var(--border); }
+.tchip.on .node-glyph { color: var(--c); }
 .tchip b { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; opacity: .8; }
 .tchip:hover { border-color: var(--c); color: var(--text-secondary); }
 .tchip.on { border-color: var(--c); color: var(--text); background: color-mix(in srgb, var(--c) 8%, #fff); }
-.tchip.on .tchip-dot { background: var(--c); }
 .graph-hint { font-size: 11.5px; color: var(--warning); font-weight: 600; }
 /* Объяснение, почему включённый тип может не показать ни одной связи */
 .type-warn {
@@ -438,8 +440,6 @@ tr.row-link { cursor: pointer; }
     padding: 9px 11px; font-size: 11px; box-shadow: var(--shadow); max-width: min(300px, 62%);
 }
 .graph-legend .lg-title { padding-right: 20px; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); margin-bottom: 6px; }
-.lg-swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
-.lg-swatch.round { border-radius: 50%; }
 .graph-legend .lg-toggle {
     position: absolute; top: 5px; right: 6px; background: none; border: none; cursor: pointer;
     color: var(--text-muted); font-size: 14px; line-height: 1; padding: 2px 4px; border-radius: 4px;
@@ -1125,7 +1125,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.1.7';
+const APP_VERSION = '1.1.8';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3870,7 +3870,7 @@ function renderGraph() {
                 'border-width': 2, 'border-color': '#fff',
                 'text-background-color': '#fff', 'text-background-opacity': .8,
                 'text-background-padding': 2, 'text-background-shape': 'roundrectangle',
-                'transition-property': 'opacity, border-color, width, height, font-size',
+                'transition-property': 'opacity, border-color, outline-width, width, height, font-size',
                 'transition-duration': '220ms',
             }},
             { selector: 'node[warn = 1]',   style: { 'border-color': '#dc2626', 'border-width': 3 } },
@@ -3909,16 +3909,19 @@ function renderGraph() {
             // Выбранный узел — центр разбора, поэтому он крупнее всего остального
             // примерно вдвое. Размер не спорит с цветом связей: это другой канал.
             { selector: '.hl-node', style: {
-                'border-color': '#ffffff', 'border-width': 4,
-                'underlay-color': '#0f172a', 'underlay-opacity': .92, 'underlay-padding': 9,
-                'width': 58, 'height': 48, 'z-index': 40,
-                'font-size': 14, 'font-weight': 800, 'color': '#ffffff',
-                'text-background-color': '#0f172a', 'text-background-opacity': 1,
-                'text-background-padding': 5, 'text-margin-y': 11, 'text-max-width': 150,
+                // Двойное кольцо: белый бордюр + тёмный контур снаружи.
+                // Заливки нет — она перекрывала соседей и читалась как чёрный блок.
+                'border-color': '#ffffff', 'border-width': 3,
+                'outline-width': 3, 'outline-color': '#0f172a', 'outline-opacity': 1, 'outline-offset': 0,
+                'width': 44, 'height': 36, 'z-index': 40,
+                'font-size': 12.5, 'font-weight': 800, 'color': '#0f172a',
+                'text-background-color': '#ffffff', 'text-background-opacity': .96,
+                'text-border-width': 1.5, 'text-border-color': '#0f172a', 'text-border-opacity': 1,
+                'text-background-padding': 3, 'text-margin-y': 8, 'text-max-width': 140,
             } },
             // Прямые соседи — второй уровень: заметно крупнее фона, но меньше центра.
-            { selector: 'node.hl-near', style: { 'width': 34, 'height': 30, 'z-index': 25, 'font-weight': 700 } },
-            { selector: 'node.hl-near[type = "sheet"]', style: { 'width': 42, 'height': 32 } },
+            { selector: 'node.hl-near', style: { 'width': 32, 'height': 28, 'z-index': 25, 'font-weight': 700 } },
+            { selector: 'node.hl-near[type = "sheet"]', style: { 'width': 38, 'height': 30 } },
             // Пока выбран объект, цвет линии означает НАПРАВЛЕНИЕ, а не тип.
             // Это допустимо только потому, что легенда в этот момент переключается
             // и говорит об этом прямо. Полупрозрачные ореолы на десятках линий
@@ -4118,8 +4121,8 @@ function showNodeDetails(id, upSet, downSet, hosted, relUp, relDown) {
     }
 
     $('#graph-details').hidden = false;
-    $('#gd-title').innerHTML = '<span class="pill" style="background:' + type.color + '22;color:' + type.color + '">' +
-        esc(type.label) + '</span><br>' + esc(n.label) + where;
+    $('#gd-title').innerHTML = '<span class="pill pill-glyph" style="background:' + type.color + '22;color:' + type.color + '">' +
+        nodeGlyph(n.type, 'currentColor') + esc(type.label) + '</span><br>' + esc(n.label) + where;
 
     const kv = [];
     const r = n.ref || {};
@@ -4168,7 +4171,7 @@ function showNodeDetails(id, upSet, downSet, hosted, relUp, relDown) {
                   }).join('')
                 : '<span class="gd-rel gd-rel-far" title="Связь не прямая: объект достигается через цепочку">через цепочку</span>';
             return '<div class="gd-link" data-focus-node="' + esc(x) + '">' +
-                '<span class="lg-swatch" style="background:' + ((NODE_TYPES[(APP.graph.index.get(x) || {}).type] || {}).color || '#94a3b8') + '"></span>' +
+                nodeGlyph((APP.graph.index.get(x) || {}).type) +
                 '<span class="gd-link-body"><span class="gd-link-name">' + esc(nm(x)) + '</span>' + badge + '</span></div>';
           }).join('') +
           (ids.size > 40 ? '<div class="muted" style="font-size:11px;padding:4px 8px">…и ещё ' + (ids.size - 40) + '</div>' : '') + '</div>'
@@ -4235,7 +4238,7 @@ function buildTypeFilter(reset) {
         return '<button class="tchip' + (APP.typeFilter.has(t) ? ' on' : '') + '" data-type="' + t + '"' +
             ' style="--c:' + NODE_TYPES[t].color + '"' +
             ' title="' + esc(NODE_TYPES[t].label) + (rel ? ' — связан с: ' + esc(rel) : ' — связей нет') + '">' +
-            '<span class="tchip-dot"></span>' + esc(NODE_TYPES[t].label) + ' <b>' + counts[t] + '</b></button>';
+            nodeGlyph(t, 'currentColor') + esc(NODE_TYPES[t].label) + ' <b>' + counts[t] + '</b></button>';
     }).join('');
 
     const hiddenTypes = Object.keys(counts).filter(t => !APP.typeFilter.has(t));
@@ -4274,6 +4277,33 @@ function buildTypeFilter(reset) {
  * может не показать ни одной связи: именованные диапазоны, например, связаны
  * только с листами, и без листов висят одинокими точками.
  */
+/**
+ * Силуэт узла для чипов, списка выбора и панели.
+ *
+ * На графе тип объекта кодируется формой, а в интерфейсе был одинаковый
+ * цветной квадратик — связь между списком и холстом приходилось держать
+ * в голове. Пути ниже повторяют формы cytoscape в коробке 14×12.
+ */
+const NODE_GLYPHS = {
+    'round-rectangle': '<rect x="1" y="2" width="12" height="8" rx="2.5"/>',
+    'rectangle':       '<rect x="1" y="2" width="12" height="8"/>',
+    'cut-rectangle':   '<polygon points="3,2 11,2 13,4 13,8 11,10 3,10 1,8 1,4"/>',
+    'barrel':          '<path d="M3.4 2h7.2c1.6 1.2 1.6 6.8 0 8H3.4c-1.6-1.2-1.6-6.8 0-8z"/>',
+    'diamond':         '<polygon points="7,1 13,6 7,11 1,6"/>',
+    'hexagon':         '<polygon points="4,1.5 10,1.5 13,6 10,10.5 4,10.5 1,6"/>',
+    'octagon':         '<polygon points="4.5,1.5 9.5,1.5 13,4.5 13,7.5 9.5,10.5 4.5,10.5 1,7.5 1,4.5"/>',
+    'tag':             '<polygon points="1,2 9,2 13,6 9,10 1,10"/>',
+    'ellipse':         '<ellipse cx="7" cy="6" rx="6" ry="4"/>',
+};
+
+/** @param color — явный цвет или 'currentColor', чтобы им управлял CSS. */
+function nodeGlyph(type, color) {
+    const meta = NODE_TYPES[type] || {};
+    const shape = NODE_GLYPHS[meta.shape] || NODE_GLYPHS['round-rectangle'];
+    return '<svg class="node-glyph" width="14" height="12" viewBox="0 0 14 12" aria-hidden="true" ' +
+        'fill="' + (color || meta.color || '#94a3b8') + '">' + shape + '</svg>';
+}
+
 /**
  * Образец связи для легенды и подсказки.
  *
@@ -4359,7 +4389,7 @@ function buildLegend() {
         const to = Array.from(nb.get(t)).filter(x => x !== 'book')
             .map(x => (NODE_TYPES[x] || {}).label || x).sort();
         return '<div class="lg-mrow"><span class="lg-mfrom">' +
-            '<span class="lg-swatch" style="background:' + meta.color + '"></span>' + esc(meta.label || t) +
+            nodeGlyph(t) + esc(meta.label || t) +
             '</span><span class="lg-mto">↔ ' + esc(to.join(', ')) + '</span></div>';
     }).join('') || '<div class="lg-mrow"><span class="lg-mto">связей в книге нет</span></div>';
 }
@@ -4590,13 +4620,13 @@ function initEvents() {
         sl.innerHTML = groups.map(g => {
             const meta = NODE_TYPES[g.type] || {};
             const off = shown && !shown.has(g.type);
-            return '<div class="gs-group"><span class="lg-swatch" style="background:' + meta.color + '"></span>' +
+            return '<div class="gs-group">' + nodeGlyph(g.type) +
                 esc(meta.label || g.type) + (off ? ' <span style="color:var(--warning)">(скрыт на графе)</span>' : '') +
                 '<span class="gs-count">' + g.list.length + '</span></div>' +
                 g.list.slice(0, PER_GROUP).map(n => {
                     const loc = nodeLocation(n);
                     return '<div class="gs-opt" role="option" data-focus-node="' + esc(n.id) + '">' +
-                        '<span class="lg-swatch" style="background:' + meta.color + '"></span>' +
+                        nodeGlyph(n.type) +
                         '<span class="gs-body"><span class="gs-name">' + hi(n.label) + '</span>' +
                         (loc ? '<span class="gs-loc">' + hi(loc) + '</span>' : '') + '</span></div>';
                 }).join('') +
