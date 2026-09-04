@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.1.4 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.1.5 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -344,6 +344,14 @@ tr.row-link { cursor: pointer; }
 }
 .gs-list[hidden] { display: none; }
 .graph-search input { padding-right: 30px; }
+.graph-search.has-pick input { padding-right: 52px; font-weight: 700; color: var(--primary-dark); background: #fff; border-color: var(--primary); }
+.gs-clear {
+    position: absolute; right: 26px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer; color: var(--text-muted);
+    padding: 3px; display: flex; border-radius: 5px;
+}
+.gs-clear:hover { color: var(--danger); background: var(--danger-light); }
+.gs-clear svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2.4; fill: none; display: block; }
 .gs-caret {
     position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
     background: none; border: none; cursor: pointer; color: var(--text-muted);
@@ -430,8 +438,6 @@ tr.row-link { cursor: pointer; }
     padding: 9px 11px; font-size: 11px; box-shadow: var(--shadow); max-width: min(300px, 62%);
 }
 .graph-legend .lg-title { padding-right: 20px; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); margin-bottom: 6px; }
-.lg-items { display: flex; flex-wrap: wrap; gap: 4px 11px; }
-.lg-item { display: flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text-secondary); }
 .lg-swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 .lg-swatch.round { border-radius: 50%; }
 .graph-legend .lg-toggle {
@@ -467,6 +473,12 @@ tr.row-link { cursor: pointer; }
 .lg-edge:hover .lg-edge-hint, .lg-edge.expanded .lg-edge-hint { display: block; }
 .lg-edge-num { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted); flex-shrink: 0; margin-top: 2px; }
 
+.lg-title-accent { color: var(--primary-dark); }
+/* Пока выбран объект, типы связей не определяют цвет — приглушаем их,
+   чтобы легенда не выглядела как два противоречащих утверждения сразу. */
+.graph-legend.focus-mode #lg-edges,
+.graph-legend.focus-mode .lg-title-edges { display: none; }
+.graph-legend.focus-mode #lg-focus .lg-title-accent { margin-top: 0; }
 .lg-edge.is-static { cursor: default; }
 .lg-edge.is-static:hover { background: none; }
 .lg-focus-note { font-size: 10px; color: var(--text-muted); line-height: 1.45; padding: 2px 6px 0; font-weight: 500; }
@@ -866,6 +878,9 @@ table.matrix td.cell[data-n] { cursor: default; }
                 <span class="gs-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
                 <input type="text" id="graph-search-input" placeholder="Выбрать или найти объект…" autocomplete="off"
                        role="combobox" aria-expanded="false" aria-controls="graph-search-list" aria-label="Выбор объекта на графе">
+                <button class="gs-clear" id="graph-search-clear" aria-label="Снять выбор" title="Снять выбор" hidden>
+                    <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
                 <button class="gs-caret" id="graph-search-caret" aria-label="Показать все объекты" tabindex="-1">
                     <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
@@ -903,16 +918,14 @@ table.matrix td.cell[data-n] { cursor: default; }
                 <div id="cy"></div>
                 <div class="graph-legend" id="graph-legend">
                     <button class="lg-toggle" id="lg-toggle" aria-label="Свернуть легенду" title="Свернуть легенду">▾</button>
-                    <div class="lg-title">Связи на графе</div>
+                    <div class="lg-title lg-title-edges">Связи на графе</div>
                     <div class="lg-scroll">
                         <div class="lg-edges" id="lg-edges"></div>
+                        <div class="lg-focus" id="lg-focus" hidden></div>
                         <div class="lg-sub">
                             <button class="lg-more" id="lg-more" aria-expanded="false">Что с чем может быть связано ▾</button>
                             <div class="lg-matrix" id="lg-matrix" hidden></div>
                         </div>
-                        <div class="lg-focus" id="lg-focus" hidden></div>
-                        <div class="lg-title" style="margin-top:9px">Объекты</div>
-                        <div class="lg-items" id="lg-items"></div>
                     </div>
                 </div>
                 <div class="cy-tip" id="cy-tip" hidden></div>
@@ -1112,7 +1125,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.1.4';
+const APP_VERSION = '1.1.5';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3892,12 +3905,21 @@ function renderGraph() {
             // Объявлено ПОСЛЕ .faded намеренно: в cytoscape побеждает последнее
             // правило, иначе погашенную связь нельзя рассмотреть наведением.
             { selector: 'edge.edge-hl', style: { 'width': 4, 'opacity': 1, 'z-index': 20 } },
-            { selector: '.hl-node', style: { 'border-color': '#0f172a', 'border-width': 3.5 } },
-            // Направление в фокусе показывает ореол под линией, а не её цвет:
-            // цвет линии обязан означать тип связи, иначе он спорит с легендой.
-            { selector: 'edge.hl-up',   style: { 'opacity': 1, 'underlay-color': '#0d9488', 'underlay-opacity': .3, 'underlay-padding': 4 } },
-            { selector: 'edge.hl-down', style: { 'opacity': 1, 'underlay-color': '#db2777', 'underlay-opacity': .3, 'underlay-padding': 4 } },
-            { selector: 'edge.hl-self', style: { 'opacity': 1, 'underlay-color': '#94a3b8', 'underlay-opacity': .22, 'underlay-padding': 3 } },
+            { selector: '.hl-node', style: {
+                'border-color': '#ffffff', 'border-width': 3,
+                'underlay-color': '#0f172a', 'underlay-opacity': .92, 'underlay-padding': 7,
+                'width': 42, 'height': 34, 'z-index': 40,
+                'font-size': 13, 'font-weight': 800, 'color': '#ffffff',
+                'text-background-color': '#0f172a', 'text-background-opacity': 1,
+                'text-background-padding': 4, 'text-margin-y': 9,
+            } },
+            // Пока выбран объект, цвет линии означает НАПРАВЛЕНИЕ, а не тип.
+            // Это допустимо только потому, что легенда в этот момент переключается
+            // и говорит об этом прямо. Полупрозрачные ореолы на десятках линий
+            // читались как грязь — чистый цвет нагляднее.
+            { selector: 'edge.hl-up',   style: { 'line-color': '#0d9488', 'target-arrow-color': '#0d9488', 'opacity': 1, 'width': 3 } },
+            { selector: 'edge.hl-down', style: { 'line-color': '#db2777', 'target-arrow-color': '#db2777', 'opacity': 1, 'width': 3 } },
+            { selector: 'edge.hl-self', style: { 'line-color': '#334155', 'target-arrow-color': '#334155', 'opacity': 1, 'width': 2.5 } },
         ],
         layout: LAYOUTS[currentLayout],
     });
@@ -3921,8 +3943,11 @@ function renderGraph() {
                    : e.hasClass('hl-up')   ? { text: 'к выбранному',      color: '#0d9488' }
                    : e.hasClass('hl-down') ? { text: 'от выбранного',     color: '#db2777' }
                    : null;
+        // В фокусе линия перекрашена — образец берёт её реальный цвет, а тип
+        // связи остаётся в тексте. Так подсказка всегда совпадает с холстом.
+        const shown = window.__focusSeeds ? e.style('line-color') : null;
         showTip(evt.renderedPosition || e.midpoint(),
-            edgeSample(v, 26) +
+            edgeSample(v, 26, shown) +
             esc(v.label) + (cnt > 1 ? '<span class="tip-num">×' + fmtNum(cnt) + '</span>' : '') +
             (role ? '<span class="tip-role" style="color:' + role.color + '">' + role.text + '</span>' : ''));
         e.addClass('edge-hl');
@@ -3945,6 +3970,16 @@ function renderGraph() {
     cy.on('tap', evt => { if (evt.target === cy) clearFocus(); });
 
     buildLegend();
+}
+
+/** Показывает выбранный объект в поле фильтра (или очищает поле). */
+function setPickerValue(label) {
+    const si = $('#graph-search-input'), wrap = si && si.closest('.graph-search');
+    if (!si || !wrap) return;
+    si.value = label || '';
+    wrap.classList.toggle('has-pick', !!label);
+    $('#graph-search-clear').hidden = !label;
+    window.__pickerTyping = false;   // значение — не поисковый запрос
 }
 
 /** Режим фокуса: подсвечиваем всё, откуда узел берёт данные, и всё, что от него зависит. */
@@ -3987,7 +4022,11 @@ function focusNode(id) {
     node.removeClass('faded').addClass('hl-node');
     seedSet.forEach(sd => cy.getElementById(sd).removeClass('faded'));
     window.__focusSeeds = seedSet;
-    const lf = $('#lg-focus'); if (lf) lf.hidden = false;
+    // Имя выбранного фиксируем в поле фильтра: раньше оно оставалось пустым,
+    // и понять, что именно выбрано, можно было только по панели справа.
+    if (typeof setPickerValue === 'function') setPickerValue(meta.label || '');
+    const lg = $('#graph-legend');
+    if (lg) { lg.classList.add('focus-mode'); $('#lg-focus').hidden = false; }
     up.forEach(n => cy.getElementById(n).removeClass('faded'));
     down.forEach(n => cy.getElementById(n).removeClass('faded'));
     // Связь внутри выбранного (лист ↔ его таблица) не «вверх» и не «вниз»:
@@ -4001,7 +4040,9 @@ function focusNode(id) {
 
 function clearFocus() {
     window.__focusSeeds = null;
-    const lf = $('#lg-focus'); if (lf) lf.hidden = true;
+    const lg = $('#graph-legend');
+    if (lg) { lg.classList.remove('focus-mode'); $('#lg-focus').hidden = true; }
+    if (typeof setPickerValue === 'function') setPickerValue('');
     if (window.__cy) window.__cy.elements().removeClass('faded hl-node hl-up hl-down hl-self');
     $('#graph-details').hidden = true;
 }
@@ -4178,16 +4219,6 @@ function buildTypeFilter(reset) {
     }
 }
 
-/** Образец ореола: линия своего цвета в цветном свечении — как в режиме фокуса. */
-function haloSample(halo, w) {
-    w = w || 34;
-    return '<svg class="edge-sample" width="' + w + '" height="11" viewBox="0 0 ' + w + ' 11" aria-hidden="true">' +
-        '<line x1="1" y1="5.5" x2="' + (w - 1) + '" y2="5.5" stroke="' + halo + '" stroke-opacity="0.3" stroke-width="9" stroke-linecap="round"/>' +
-        '<line x1="1" y1="5.5" x2="' + (w - 7) + '" y2="5.5" stroke="#64748b" stroke-width="2.4"/>' +
-        '<path d="M' + (w - 7) + ' 2 L' + (w - 1) + ' 5.5 L' + (w - 7) + ' 9 Z" fill="#64748b"/>' +
-        '</svg>';
-}
-
 /**
  * Какие типы объектов связаны между собой в ЭТОЙ книге. Считается по фактическим
  * рёбрам, ничего не захардкожено. Нужно, чтобы объяснить, почему включённый тип
@@ -4206,8 +4237,9 @@ function haloSample(halo, w) {
  * от того, как браузер округлит бордюр. Легенда и подсказка зовут одну
  * функцию, поэтому выглядят одинаково по построению.
  */
-function edgeSample(v, w) {
+function edgeSample(v, w, colorOverride) {
     w = w || 30;
+    v = colorOverride ? Object.assign({}, v, { color: colorOverride }) : v;
     const arrow = v.arrow !== false;
     const lineEnd = arrow ? w - 6 : w;
     const dash = v.dash === 'dashed' ? '5,3.5' : v.dash === 'dotted' ? '0.1,3.6' : null;
@@ -4235,11 +4267,8 @@ function typeNeighbours() {
 }
 
 function buildLegend() {
-    const used = new Set(APP.graph.nodes.filter(n => !APP.typeFilter || APP.typeFilter.has(n.type)).map(n => n.type));
-    $('#lg-items').innerHTML = Object.entries(NODE_TYPES)
-        .filter(([k]) => used.has(k) && k !== 'book')
-        .map(([, v]) => '<span class="lg-item"><span class="lg-swatch" style="background:' + v.color + '"></span>' + esc(v.label) + '</span>')
-        .join('');
+    /* Цвета объектов не дублируем: их показывают чипы «Показывать» —
+       там и цвет, и название, и количество. */
 
     /* ── связи: показываем только те типы, что реально есть в книге */
     const counts = {};
@@ -4258,16 +4287,21 @@ function buildLegend() {
                 '<span class="lg-edge-num">' + fmtNum(counts[t]) + '</span></div>';
         }).join('');
 
-    /* ── пояснение к режиму фокуса: ореол ≠ тип связи */
+    /* ── Блок для режима фокуса. Пока выбран объект, цвет линии означает
+          направление, а не тип — легенда обязана сказать об этом прямо,
+          иначе она противоречит холсту. */
+    const focusRow = (color, text) =>
+        '<div class="lg-edge is-static">' +
+        edgeSample({ color, dash: 'solid', arrow: true }, 34) +
+        '<span class="lg-edge-body"><span class="lg-edge-name">' + text + '</span></span></div>';
+
     $('#lg-focus').innerHTML =
-        '<div class="lg-title" style="margin-top:9px">Выбран объект</div>' +
-        '<div class="lg-edge is-static">' + haloSample('#0d9488') +
-        '<span class="lg-edge-body"><span class="lg-edge-name">ведёт к выбранному</span></span></div>' +
-        '<div class="lg-edge is-static">' + haloSample('#db2777') +
-        '<span class="lg-edge-body"><span class="lg-edge-name">идёт от выбранного</span></span></div>' +
-        '<div class="lg-edge is-static">' + haloSample('#94a3b8') +
-        '<span class="lg-edge-body"><span class="lg-edge-name">внутри выбранного</span></span></div>' +
-        '<div class="lg-focus-note">Свечение показывает направление, цвет самой линии — по-прежнему тип связи.</div>';
+        '<div class="lg-title lg-title-accent">Выбран объект · цвет = направление</div>' +
+        focusRow('#0d9488', 'ведёт к выбранному') +
+        focusRow('#db2777', 'идёт от выбранного') +
+        focusRow('#334155', 'внутри выбранного') +
+        '<div class="lg-focus-note">Тип связи виден при наведении на линию и в панели справа. ' +
+        'Снять выбор — крестик в поле или клик по пустому месту.</div>';
 
     /* ── «что с чем может быть связано» — ответ на вопрос, почему тип не светится */
     const nb = typeNeighbours();
@@ -4511,7 +4545,9 @@ function initEvents() {
     }
 
     function openPicker() {
-        renderPicker(si.value);
+        // Пока в поле лежит имя выбранного объекта, а не запрос, показываем
+        // весь список: иначе выбор одного объекта отрезал бы доступ к остальным.
+        renderPicker(window.__pickerTyping ? si.value : '');
         sl.hidden = false;
         wrap.classList.add('open');
         si.setAttribute('aria-expanded', 'true');
@@ -4523,12 +4559,19 @@ function initEvents() {
         $$('.gs-opt.active', sl).forEach(x => x.classList.remove('active'));
     }
 
-    si.oninput = openPicker;
-    si.onfocus = openPicker;
+    si.oninput = () => { window.__pickerTyping = true; openPicker(); };
+    si.onfocus = () => { if (!window.__pickerTyping) si.select(); openPicker(); };
     si.onblur = () => setTimeout(closePicker, 180);
     $('#graph-search-caret').onmousedown = e => {
         e.preventDefault();
         if (sl.hidden) { si.focus(); openPicker(); } else closePicker();
+    };
+    $('#graph-search-clear').onmousedown = e => {
+        e.preventDefault();
+        window.__pickerTyping = false;
+        setPickerValue('');
+        clearFocus();
+        closePicker();
     };
     si.onkeydown = e => {
         if (e.key === 'Escape') { closePicker(); si.blur(); return; }
