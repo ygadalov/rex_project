@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.1.9 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.1.10 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1017,7 +1017,10 @@ table.matrix td.cell[data-n] { cursor: default; }
     </div>
 
     <div class="card">
-        <div class="card-title">Именованные диапазоны</div>
+        <div class="card-title">Именованные диапазоны
+            <span class="hint" id="names-note"></span>
+            <button class="lg-more" id="names-hidden-toggle" hidden aria-expanded="false"></button>
+        </div>
         <div class="table-box">
             <table class="wide">
                 <thead><tr><th>Имя</th><th>Область</th><th>Ссылается на</th><th>Использований</th><th>Статус</th></tr></thead>
@@ -1140,7 +1143,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.1.9';
+const APP_VERSION = '1.1.10';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1151,6 +1154,7 @@ const APP = {
     typeFilter: null,   // какие типы объектов показывать на графе
     edgeFilter: null,   // какие типы связей показывать (управляется легендой)
     userLayout: false,  // выбирал ли раскладку человек (тогда не переключаем сами)
+    showHiddenNames: false, // показывать ли скрытые имена — по умолчанию нет, их бывают тысячи
 };
 
 /* ───────────────────────── мелкие утилиты ───────────────────────── */
@@ -2405,9 +2409,15 @@ function buildGraph(books) {
         (book.tables || []).forEach(t => addNode(tid(t.name), 'table', t.name, {
             parent: P, bookIdx: bi, ref: t, sheet: t.sheet, fromQuery: t.tableType === 'queryTable',
         }));
-        (book.names || []).filter(n => !n.builtin).forEach(n => addNode(nid(n.name), 'name', n.name, {
-            parent: P, bookIdx: bi, ref: n,
-        }));
+        /* Скрытые имена в граф не пускаем: их не видно даже в Диспетчере имён,
+           связей они не несут, а числом (десятки тысяч) душат холст. Исключение —
+           имя, на которое реально ссылается хоть одна формула: оно рабочее. */
+        const refdNames = new Set();
+        (book.sheets || []).forEach(sh => (sh.nameRefs || new Map()).forEach((c, n) => refdNames.add(n)));
+        (book.names || []).filter(n => !n.builtin && (!n.hidden || refdNames.has(n.name)))
+            .forEach(n => addNode(nid(n.name), 'name', n.name, {
+                parent: P, bookIdx: bi, ref: n,
+            }));
         (book.queries || []).forEach(q => addNode(qid(q.name), 'query', q.name, {
             parent: P, bookIdx: bi, ref: q, isFunction: q.isFunction,
         }));
@@ -2452,7 +2462,7 @@ function buildGraph(books) {
         });
 
         /* ── именованный диапазон указывает на лист */
-        (book.names || []).filter(n => !n.builtin).forEach(n => {
+        (book.names || []).filter(n => !n.builtin && nodeIdx.has(nid(n.name))).forEach(n => {
             const m = /^'?([^'!]+)'?!/.exec(String(n.ref || '').replace(/^=/, ''));
             if (m && nodeIdx.has(sid(m[1]))) addEdge(sid(m[1]), nid(n.name), 'ref');
         });
@@ -2626,14 +2636,32 @@ function runAudit(books, graph) {
             why: 'Часть из них может быть «штатной» (#N/A в ВПР как маркер отсутствия), но каждая ошибка должна быть осознанной. Непойманная #DIV/0! в знаменателе отчёта — классика.',
             count: Array.from(errAgg.values()).reduce((a, b) => a + b, 0), items: errItems });
 
-        // Битые именованные диапазоны — тихий убийца
-        const brokenNames = (book.names || []).filter(n => n.broken)
+        // Битые именованные диапазоны — тихий убийца.
+        // Считаем только видимые: скрытые имена (hidden="1") не показывает даже
+        // Диспетчер имён, чинить их вручную всё равно негде, и в критичном списке
+        // они топят настоящие находки числом.
+        const bookNames  = (book.names || []).filter(n => !n.builtin);
+        const shownNames = bookNames.filter(n => !n.hidden);
+        const hiddenAll  = bookNames.filter(n => n.hidden);
+        const brokenNames = shownNames.filter(n => n.broken)
             .map(n => ({ loc: pre + n.name, txt: 'область: ' + n.scope + '  ·  ' + n.ref }));
         add({ id: 'names-broken', category: 'Ошибки', severity: 'critical',
             title: 'Сломанные именованные диапазоны',
-            desc: 'Имя ссылается на #REF!.',
+            desc: 'Имя ссылается на #REF!. Считаются только видимые имена — те, что показывает Ctrl+F3.',
             why: 'Самый незаметный из критичных дефектов: в самих ячейках может ничего не подсвечиваться, а имя уже мертво. Всплывает в самый неподходящий момент.',
             count: brokenNames.length, items: brokenNames });
+
+        // Скрытые имена — отдельная история: не дефект расчёта, а балласт файла
+        const hiddenBroken = hiddenAll.filter(n => n.broken).length;
+        if (hiddenAll.length) {
+            add({ id: 'names-hidden', category: 'Гигиена', severity: 'minor',
+                title: 'Скрытые именованные диапазоны от надстроек и шаблонов',
+                desc: 'У имени стоит признак hidden — Excel не показывает его в Диспетчере имён (Ctrl+F3)' +
+                      (hiddenBroken ? '. Из них сломано: ' + fmtNum(hiddenBroken) : '') + '.',
+                why: 'Обычно это следы надстроек (BLPH… — Bloomberg), режимов представления и копирования листов из чужих книг. На расчёт они не влияют, но раздувают файл, замедляют открытие и создают ложное впечатление, что в книге тысячи диапазонов. Вручную их не удалить — нужен макрос или пересборка книги.',
+                count: hiddenAll.length,
+                items: hiddenAll.slice(0, 200).map(n => ({ loc: pre + n.name, txt: 'область: ' + n.scope + '  ·  ' + n.ref })) });
+        }
 
         // Ручной режим пересчёта — файл показывает старые числа
         if (book.calc && /manual/i.test(book.calc.mode)) {
@@ -2742,12 +2770,12 @@ function runAudit(books, graph) {
             why: 'Либо задел на будущее, либо остаток от прошлой версии отчёта. При разборе модели полезно понимать, какие меры реально работают, а какие просто занимают место в списке полей.',
             count: idleMeasures.length, items: idleMeasures });
 
-        // Неиспользуемые имена
-        const unusedNames = (book.names || []).filter(n => !n.builtin && !n.broken && n.uses === 0)
+        // Неиспользуемые имена — тоже только видимые: скрытые учтены выше отдельно
+        const unusedNames = bookNames.filter(n => !n.hidden && !n.broken && n.uses === 0)
             .map(n => ({ loc: pre + n.name, txt: 'область: ' + n.scope + '  ·  ' + n.ref }));
         add({ id: 'unused-names', category: 'Гигиена', severity: 'minor',
             title: 'Именованные диапазоны, которые нигде не используются',
-            desc: 'Имя объявлено, но не встречается ни в одной формуле.',
+            desc: 'Имя объявлено, но не встречается ни в одной формуле. Только видимые имена.',
             why: 'Мусор из прошлых версий книги. Мешает при разборе: непонятно, важное это имя или забытое.',
             count: unusedNames.length, items: unusedNames });
 
@@ -3223,8 +3251,26 @@ function renderSheets() {
     ).join('') || '<tr><td colspan="6" class="empty-state">Умных таблиц нет' +
         (APP.books.some(b => b.format === 'xls') ? ' (формат .xls их не поддерживает)' : '') + '</td></tr>';
 
-    const allNames = [];
-    APP.books.forEach(b => (b.names || []).filter(n => !n.builtin).forEach(n => allNames.push(n)));
+    /* Скрытые имена (hidden="1") Excel не показывает даже в Диспетчере имён (Ctrl+F3).
+       Их тысячами тянут за собой надстройки и копирование листов из чужих шаблонов.
+       Показывать их вперемешку с рабочими — значит выдавать пятизначную цифру там,
+       где пользователь видит полсотни имён. По умолчанию их нет в списке. */
+    const everyName = [];
+    APP.books.forEach(b => (b.names || []).filter(n => !n.builtin).forEach(n => everyName.push(n)));
+    const hiddenNames = everyName.filter(n => n.hidden);
+    const visibleNames = everyName.filter(n => !n.hidden);
+    const allNames = APP.showHiddenNames ? everyName : visibleNames;
+
+    $('#names-note').textContent = hiddenNames.length
+        ? 'видимых ' + fmtNum(visibleNames.length) + ' — столько же покажет Ctrl+F3 · скрытых ' +
+          fmtNum(hiddenNames.length) + ' (их создают надстройки и шаблоны, Диспетчер имён их не показывает)'
+        : (visibleNames.length ? 'все ' + fmtNum(visibleNames.length) + ' видны в Ctrl+F3' : '');
+    const nht = $('#names-hidden-toggle');
+    nht.hidden = !hiddenNames.length;
+    nht.textContent = APP.showHiddenNames
+        ? 'скрыть служебные ▴'
+        : 'показать скрытые (' + fmtNum(hiddenNames.length) + ') ▾';
+    nht.setAttribute('aria-expanded', String(!!APP.showHiddenNames));
     // Сначала сломанные, потом неиспользуемые, потом рабочие: наверху то, ради чего сюда пришли
     allNames.sort((a, b) => (b.broken - a.broken) || ((a.uses === 0) - (b.uses === 0)) * -1 || String(a.name).localeCompare(String(b.name), 'ru'));
     const namesShown = allNames.slice(0, NAMES_SHOWN);
@@ -3235,7 +3281,8 @@ function renderSheets() {
         '<td class="num-cell">' + fmtNum(n.uses) + '</td>' +
         '<td>' + (n.broken ? '<span class="pill pill-red">сломан</span>'
                 : n.uses === 0 ? '<span class="pill pill-amber">не используется</span>'
-                : '<span class="pill pill-green">в работе</span>') + '</td></tr>'
+                : '<span class="pill pill-green">в работе</span>') +
+            (n.hidden ? ' <span class="pill pill-gray">скрытое</span>' : '') + '</td></tr>'
     ).join('') + (allNames.length > NAMES_SHOWN
         ? '<tr><td colspan="5" class="muted" style="text-align:center;padding:12px">показаны первые ' +
           NAMES_SHOWN + ' из ' + fmtNum(allNames.length) + ' — сначала сломанные и неиспользуемые. Полный список — в выгрузке JSON</td></tr>'
@@ -4541,6 +4588,10 @@ function initEvents() {
         const lg = $('#graph-legend');
         lg.classList.toggle('collapsed');
         $('#lg-toggle').title = lg.classList.contains('collapsed') ? 'Показать легенду' : 'Свернуть легенду';
+    };
+    $('#names-hidden-toggle').onclick = () => {
+        APP.showHiddenNames = !APP.showHiddenNames;
+        renderSheets();
     };
     $('#lg-more').onclick = () => {
         const m = $('#lg-matrix'), b = $('#lg-more');
