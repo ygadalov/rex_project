@@ -3,11 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>XLS EXPLORER v0.1.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
-  XLS EXPLORER — визуальный разбор связей внутри книг Excel (xlsx/xlsm/xlsb/xls)
+  REX (Reverse Engineering Excel) — визуальный разбор связей внутри книг Excel
+  Форматы: xlsx / xlsm / xlsb / xls
   ────────────────────────────────────────────────────────────────────────────
   ВАЖНО: файл НИКУДА не отправляется. Весь разбор идёт в браузере пользователя.
   Сеть нужна ровно один раз — подтянуть библиотеки с jsDelivr (см. ниже).
@@ -627,7 +628,7 @@ table.matrix td.cell[data-n] { cursor: default; }
 <!-- ─────────────── SIDEBAR ─────────────── -->
 <aside class="sidebar" id="sidebar" role="complementary" aria-label="Навигация">
     <div class="sidebar-header">
-        <span class="brand">XLS EXPLORER</span>
+        <span class="brand" title="Reverse Engineering Excel">REX</span>
         <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" aria-label="Свернуть меню" title="Свернуть меню">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
         </button>
@@ -684,7 +685,7 @@ table.matrix td.cell[data-n] { cursor: default; }
     </nav>
 
     <div class="sidebar-footer">
-        v0.1.0 · всё считается локально<br>
+        <span id="sidebar-version"></span> · всё считается локально<br>
         <span id="sidebar-file" class="mono" style="color:#cbd5e1"></span>
     </div>
 </aside>
@@ -696,7 +697,7 @@ table.matrix td.cell[data-n] { cursor: default; }
     <button class="menu-toggle" id="mobile-menu-btn" aria-label="Открыть меню">
         <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
-    <strong style="font-size:13px;letter-spacing:1.5px">XLS EXPLORER</strong>
+    <strong style="font-size:13px;letter-spacing:1.5px" title="Reverse Engineering Excel">REX</strong>
     <span style="width:22px"></span>
 </div>
 
@@ -1008,13 +1009,19 @@ table.matrix td.cell[data-n] { cursor: default; }
 'use strict';
 
 /* ════════════════════════════════════════════════════════════════════════════
-   XLS EXPLORER — ядро
+   REX — ядро
    Разбор идёт послойно: ZIP → части OOXML → сущности → ГРАФ → проекции (вкладки).
    Единая графовая модель принципиальна: иначе вкладки начнут расходиться в показаниях.
    ════════════════════════════════════════════════════════════════════════════ */
 
 /** Форматы, которые разбираются собственным парсером OOXML во всю глубину. */
 const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
+
+/* Имя и версия — в одном месте. Меняются здесь, подтягиваются везде:
+   подвал меню, паспорт книги, имена выгружаемых файлов.
+   Не забудьте про <title> и .brand в разметке — они статические. */
+const APP_NAME = 'REX';
+const APP_VERSION = '1.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3484,7 +3491,7 @@ function buildMarkdown() {
     const L = [];
     L.push('# Паспорт книги Excel');
     L.push('');
-    L.push('_Сформировано XLS Explorer v0.1.0 · ' + new Date().toLocaleString('ru-RU') + '_');
+    L.push('_Сформировано ' + APP_NAME + ' v' + APP_VERSION + ' · ' + new Date().toLocaleString('ru-RU') + '_');
     L.push('');
     L.push('Индекс здоровья: **' + APP.health.total + ' / 100**');
     L.push('');
@@ -4076,7 +4083,7 @@ function initEvents() {
         if (!window.__cy) return;
         const uri = window.__cy.png({ full: true, scale: 2, bg: '#ffffff' });
         const a = document.createElement('a');
-        a.href = uri; a.download = 'xls-explorer-graph.png';
+        a.href = uri; a.download = 'rex-graph.png';
         document.body.appendChild(a); a.click(); a.remove();
     };
 
@@ -4175,8 +4182,9 @@ function initEvents() {
     };
 
     /* экспорт */
-    $('#btn-export-md').onclick = () => download('xls-explorer-passport.md', buildMarkdown(), 'text/markdown');
-    $('#btn-export-json').onclick = () => download('xls-explorer-graph.json', JSON.stringify({
+    $('#btn-export-md').onclick = () => download('rex-passport.md', buildMarkdown(), 'text/markdown');
+    $('#btn-export-json').onclick = () => download('rex-graph.json', JSON.stringify({
+        generator: APP_NAME + ' v' + APP_VERSION,
         generated: new Date().toISOString(),
         books: APP.books.map(b => ({ file: b.fileName, format: b.format, size: b.size, sheets: b.sheets.length })),
         nodes: APP.graph.nodes.map(n => ({ id: n.id, type: n.type, label: n.label, role: n.role || null })),
@@ -4187,7 +4195,7 @@ function initEvents() {
         const rows = [['Важность', 'Категория', 'Правило', 'Объект', 'Подробности']];
         APP.issues.forEach(i => i.items.forEach(it => rows.push([SEV[i.severity].label, i.category, i.title, it.loc, it.txt])));
         const csv = '﻿' + rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(';')).join('\r\n');
-        download('xls-explorer-findings.csv', csv, 'text/csv');
+        download('rex-findings.csv', csv, 'text/csv');
     };
     $('#btn-export-m').onclick = () => {
         const parts = [];
@@ -4206,6 +4214,7 @@ function initEvents() {
 }
 
 /* ─── старт ─── */
+$('#sidebar-version').textContent = 'v' + APP_VERSION;
 renderCapabilities();
 initEvents();
 if (!window.fflate)   showNotification('Не загрузилась библиотека fflate — разбор .xlsx работать не будет. Проверьте доступ к cdn.jsdelivr.net.', 'error', 0);
