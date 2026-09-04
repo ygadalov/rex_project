@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.1.3 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.1.4 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -467,6 +467,10 @@ tr.row-link { cursor: pointer; }
 .lg-edge:hover .lg-edge-hint, .lg-edge.expanded .lg-edge-hint { display: block; }
 .lg-edge-num { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted); flex-shrink: 0; margin-top: 2px; }
 
+.lg-edge.is-static { cursor: default; }
+.lg-edge.is-static:hover { background: none; }
+.lg-focus-note { font-size: 10px; color: var(--text-muted); line-height: 1.45; padding: 2px 6px 0; font-weight: 500; }
+
 .lg-sub { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-light); }
 .lg-more {
     background: none; border: none; padding: 0; cursor: pointer; font-family: inherit;
@@ -906,6 +910,7 @@ table.matrix td.cell[data-n] { cursor: default; }
                             <button class="lg-more" id="lg-more" aria-expanded="false">Что с чем может быть связано ▾</button>
                             <div class="lg-matrix" id="lg-matrix" hidden></div>
                         </div>
+                        <div class="lg-focus" id="lg-focus" hidden></div>
                         <div class="lg-title" style="margin-top:9px">Объекты</div>
                         <div class="lg-items" id="lg-items"></div>
                     </div>
@@ -1107,7 +1112,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.1.3';
+const APP_VERSION = '1.1.4';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3888,9 +3893,11 @@ function renderGraph() {
             // правило, иначе погашенную связь нельзя рассмотреть наведением.
             { selector: 'edge.edge-hl', style: { 'width': 4, 'opacity': 1, 'z-index': 20 } },
             { selector: '.hl-node', style: { 'border-color': '#0f172a', 'border-width': 3.5 } },
-            { selector: '.hl-up',   style: { 'line-color': '#0d9488', 'target-arrow-color': '#0d9488', 'opacity': 1, 'width': 3 } },
-            { selector: '.hl-down', style: { 'line-color': '#db2777', 'target-arrow-color': '#db2777', 'opacity': 1, 'width': 3 } },
-            { selector: '.hl-self', style: { 'opacity': 1, 'width': 2.5 } },
+            // Направление в фокусе показывает ореол под линией, а не её цвет:
+            // цвет линии обязан означать тип связи, иначе он спорит с легендой.
+            { selector: 'edge.hl-up',   style: { 'opacity': 1, 'underlay-color': '#0d9488', 'underlay-opacity': .3, 'underlay-padding': 4 } },
+            { selector: 'edge.hl-down', style: { 'opacity': 1, 'underlay-color': '#db2777', 'underlay-opacity': .3, 'underlay-padding': 4 } },
+            { selector: 'edge.hl-self', style: { 'opacity': 1, 'underlay-color': '#94a3b8', 'underlay-opacity': .22, 'underlay-padding': 3 } },
         ],
         layout: LAYOUTS[currentLayout],
     });
@@ -3980,6 +3987,7 @@ function focusNode(id) {
     node.removeClass('faded').addClass('hl-node');
     seedSet.forEach(sd => cy.getElementById(sd).removeClass('faded'));
     window.__focusSeeds = seedSet;
+    const lf = $('#lg-focus'); if (lf) lf.hidden = false;
     up.forEach(n => cy.getElementById(n).removeClass('faded'));
     down.forEach(n => cy.getElementById(n).removeClass('faded'));
     // Связь внутри выбранного (лист ↔ его таблица) не «вверх» и не «вниз»:
@@ -3993,6 +4001,7 @@ function focusNode(id) {
 
 function clearFocus() {
     window.__focusSeeds = null;
+    const lf = $('#lg-focus'); if (lf) lf.hidden = true;
     if (window.__cy) window.__cy.elements().removeClass('faded hl-node hl-up hl-down hl-self');
     $('#graph-details').hidden = true;
 }
@@ -4169,6 +4178,16 @@ function buildTypeFilter(reset) {
     }
 }
 
+/** Образец ореола: линия своего цвета в цветном свечении — как в режиме фокуса. */
+function haloSample(halo, w) {
+    w = w || 34;
+    return '<svg class="edge-sample" width="' + w + '" height="11" viewBox="0 0 ' + w + ' 11" aria-hidden="true">' +
+        '<line x1="1" y1="5.5" x2="' + (w - 1) + '" y2="5.5" stroke="' + halo + '" stroke-opacity="0.3" stroke-width="9" stroke-linecap="round"/>' +
+        '<line x1="1" y1="5.5" x2="' + (w - 7) + '" y2="5.5" stroke="#64748b" stroke-width="2.4"/>' +
+        '<path d="M' + (w - 7) + ' 2 L' + (w - 1) + ' 5.5 L' + (w - 7) + ' 9 Z" fill="#64748b"/>' +
+        '</svg>';
+}
+
 /**
  * Какие типы объектов связаны между собой в ЭТОЙ книге. Считается по фактическим
  * рёбрам, ничего не захардкожено. Нужно, чтобы объяснить, почему включённый тип
@@ -4238,6 +4257,17 @@ function buildLegend() {
                 '<span class="lg-edge-hint">' + esc(v.hint) + '</span></span>' +
                 '<span class="lg-edge-num">' + fmtNum(counts[t]) + '</span></div>';
         }).join('');
+
+    /* ── пояснение к режиму фокуса: ореол ≠ тип связи */
+    $('#lg-focus').innerHTML =
+        '<div class="lg-title" style="margin-top:9px">Выбран объект</div>' +
+        '<div class="lg-edge is-static">' + haloSample('#0d9488') +
+        '<span class="lg-edge-body"><span class="lg-edge-name">ведёт к выбранному</span></span></div>' +
+        '<div class="lg-edge is-static">' + haloSample('#db2777') +
+        '<span class="lg-edge-body"><span class="lg-edge-name">идёт от выбранного</span></span></div>' +
+        '<div class="lg-edge is-static">' + haloSample('#94a3b8') +
+        '<span class="lg-edge-body"><span class="lg-edge-name">внутри выбранного</span></span></div>' +
+        '<div class="lg-focus-note">Свечение показывает направление, цвет самой линии — по-прежнему тип связи.</div>';
 
     /* ── «что с чем может быть связано» — ответ на вопрос, почему тип не светится */
     const nb = typeNeighbours();
