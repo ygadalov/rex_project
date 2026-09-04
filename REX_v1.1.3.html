@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.1.2 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.1.3 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -490,6 +490,12 @@ tr.row-link { cursor: pointer; }
 .cy-tip { display: flex; align-items: center; gap: 6px; }
 .cy-tip .edge-sample { margin-top: 0; }
 .cy-tip .tip-num { color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 10.5px; margin-left: 4px; }
+/* В режиме фокуса связь на холсте перекрашена в цвет подсветки. Образец
+   остаётся в цвете типа — он про природу связи; роль подписываем отдельно. */
+.cy-tip .tip-role {
+    margin-left: 6px; padding-left: 6px; border-left: 1px solid var(--border);
+    font-size: 10.5px; font-weight: 700;
+}
 
 /* Панель деталей узла */
 .graph-details {
@@ -1101,7 +1107,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.1.2';
+const APP_VERSION = '1.1.3';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3876,11 +3882,15 @@ function renderGraph() {
                 }, v.dash === 'dashed' ? { 'line-dash-pattern': [6, 3] } : {},
                    v.arrow ? {} : { 'target-arrow-shape': 'none' }),
             })),
-            { selector: 'edge.edge-hl', style: { 'width': 4, 'opacity': 1, 'z-index': 20 } },
+
             { selector: '.faded', style: { 'opacity': .12, 'text-opacity': .05 } },
+            // Объявлено ПОСЛЕ .faded намеренно: в cytoscape побеждает последнее
+            // правило, иначе погашенную связь нельзя рассмотреть наведением.
+            { selector: 'edge.edge-hl', style: { 'width': 4, 'opacity': 1, 'z-index': 20 } },
             { selector: '.hl-node', style: { 'border-color': '#0f172a', 'border-width': 3.5 } },
             { selector: '.hl-up',   style: { 'line-color': '#0d9488', 'target-arrow-color': '#0d9488', 'opacity': 1, 'width': 3 } },
             { selector: '.hl-down', style: { 'line-color': '#db2777', 'target-arrow-color': '#db2777', 'opacity': 1, 'width': 3 } },
+            { selector: '.hl-self', style: { 'opacity': 1, 'width': 2.5 } },
         ],
         layout: LAYOUTS[currentLayout],
     });
@@ -3898,9 +3908,16 @@ function renderGraph() {
         const e = evt.target, t = e.data('type');
         const v = EDGE_TYPES[t] || { label: t, color: '#94a3b8', dash: 'solid' };
         const cnt = e.data('count') || 1;
+        const role = e.hasClass('hl-self') ? { text: 'внутри выбранного', color: '#64748b' }
+                   : (e.hasClass('hl-up') && e.hasClass('hl-down'))
+                                           ? { text: 'в обе стороны — цикл', color: '#b45309' }
+                   : e.hasClass('hl-up')   ? { text: 'к выбранному',      color: '#0d9488' }
+                   : e.hasClass('hl-down') ? { text: 'от выбранного',     color: '#db2777' }
+                   : null;
         showTip(evt.renderedPosition || e.midpoint(),
             edgeSample(v, 26) +
-            esc(v.label) + (cnt > 1 ? '<span class="tip-num">×' + fmtNum(cnt) + '</span>' : ''));
+            esc(v.label) + (cnt > 1 ? '<span class="tip-num">×' + fmtNum(cnt) + '</span>' : '') +
+            (role ? '<span class="tip-role" style="color:' + role.color + '">' + role.text + '</span>' : ''));
         e.addClass('edge-hl');
     });
     cy.on('mouseout', 'edge', evt => { tip.hidden = true; evt.target.removeClass('edge-hl'); });
@@ -3930,7 +3947,7 @@ function focusNode(id) {
     const node = cy.getElementById(id);
     if (!node || !node.length) return;
 
-    cy.elements().addClass('faded').removeClass('hl-node hl-up hl-down');
+    cy.elements().addClass('faded').removeClass('hl-node hl-up hl-down hl-self');
 
     // Лист «раскрывается» вместе со своими таблицами и сводными: данные уходят
     // с листа через них, и без этого лист выглядел бы тупиком.
@@ -3962,16 +3979,21 @@ function focusNode(id) {
 
     node.removeClass('faded').addClass('hl-node');
     seedSet.forEach(sd => cy.getElementById(sd).removeClass('faded'));
+    window.__focusSeeds = seedSet;
     up.forEach(n => cy.getElementById(n).removeClass('faded'));
     down.forEach(n => cy.getElementById(n).removeClass('faded'));
-    upE.forEach(e => e.removeClass('faded').addClass('hl-up'));
-    downE.forEach(e => e.removeClass('faded').addClass('hl-down'));
+    // Связь внутри выбранного (лист ↔ его таблица) не «вверх» и не «вниз»:
+    // иначе она получала бы обе метки сразу и подпись врала бы.
+    const inSeeds = e => seedSet.has(e.source().id()) && seedSet.has(e.target().id());
+    upE.forEach(e => e.removeClass('faded').addClass(inSeeds(e) ? 'hl-self' : 'hl-up'));
+    downE.forEach(e => e.removeClass('faded').addClass(inSeeds(e) ? 'hl-self' : 'hl-down'));
 
     showNodeDetails(id, up, down, seeds.slice(1), relUp, relDown);
 }
 
 function clearFocus() {
-    if (window.__cy) window.__cy.elements().removeClass('faded hl-node hl-up hl-down');
+    window.__focusSeeds = null;
+    if (window.__cy) window.__cy.elements().removeClass('faded hl-node hl-up hl-down hl-self');
     $('#graph-details').hidden = true;
 }
 
