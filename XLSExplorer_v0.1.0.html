@@ -1,0 +1,3614 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XLS EXPLORER v0.1.0 — реверс-инжиниринг книг Excel</title>
+
+<!--
+  ════════════════════════════════════════════════════════════════════════════
+  XLS EXPLORER — визуальный разбор связей внутри книг Excel (xlsx/xlsm/xlsb/xls)
+  ────────────────────────────────────────────────────────────────────────────
+  ВАЖНО: файл НИКУДА не отправляется. Весь разбор идёт в браузере пользователя.
+  Сеть нужна ровно один раз — подтянуть библиотеки с jsDelivr (см. ниже).
+
+  CDN-скрипты закреплены по версиям и подписаны SRI (sha-384).
+  При смене версии ОБЯЗАТЕЛЬНО пересчитайте integrity, иначе браузер
+  молча откажется исполнять скрипт:
+      curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A
+  ════════════════════════════════════════════════════════════════════════════
+-->
+
+<!-- fflate — распаковка ZIP (OOXML). Быстрее и в 5 раз легче JSZip. -->
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"
+        integrity="sha384-DT0Ls0mO7JmjTnT+oBuMhEJzYJO1zUqzuuMXNdnOmOQRIpN2BgSjvBV/j50NngIT"
+        crossorigin="anonymous"></script>
+
+<!-- dagre — слоевой (иерархический) layout. Должен грузиться ДО cytoscape-dagre. -->
+<script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"
+        integrity="sha384-2IH3T69EIKYC4c+RXZifZRvaH5SRUdacJW7j6HtE5rQbvLhKKdawxq6vpIzJ7j9M"
+        crossorigin="anonymous"></script>
+
+<!-- cytoscape — граф. Выбран из-за compound-узлов: книга физически содержит листы. -->
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.4/dist/cytoscape.min.js"
+        integrity="sha384-H3uzGzTfGHUAumB8+s4GEdfFwzAceN9wCCndN8AXubWKFIPuBSWKKtWDx7RhSf/z"
+        crossorigin="anonymous"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"
+        integrity="sha384-u69h9ebXeSjlg6q/rb1zKTRAGu/h8deCl0409xpS/QJctMKnc4M9Fzkm01VOQdeF"
+        crossorigin="anonymous"></script>
+
+<!--
+  SheetJS НЕ подключается здесь: он нужен только для .xls / .xlsb и весит 880 КБ.
+  Грузится лениво (см. ensureSheetJS) — тем, кто открывает только .xlsx, платить не за что.
+-->
+
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+/* ═══════════════════ ДИЗАЙН-ТОКЕНЫ ═══════════════════
+   Намеренно совпадают с FinAnalyst: инструменты одного семейства. */
+:root {
+    --primary: #3b82f6;  --primary-dark: #2563eb;  --primary-light: #dbeafe;
+    --success: #10b981;  --success-light: #d1fae5;
+    --warning: #f59e0b;  --warning-light: #fef3c7;
+    --danger:  #ef4444;  --danger-light:  #fee2e2;
+    --purple:  #7c3aed;  --purple-dark:   #6d28d9;
+
+    --sidebar-bg: #0f172a;  --sidebar-hover: #1e293b;  --sidebar-active: #334155;
+    --bg: #f1f5f9;  --card: #ffffff;
+    --text: #0f172a;  --text-secondary: #64748b;  --text-muted: #6b7280;
+    --border: #e2e8f0;  --border-light: #f1f5f9;
+
+    --sidebar-w: 260px;  --sidebar-w-collapsed: 68px;
+    --radius: 12px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-lg: 0 10px 25px -5px rgba(0,0,0,0.08), 0 8px 10px -6px rgba(0,0,0,0.04);
+
+    /* Палитра узлов графа = роль в потоке данных.
+       Один цвет = один смысл, повторяется во всех вкладках (легенда, таблицы, граф). */
+    --n-source:   #0d9488;   /* внешний источник: БД, файл, папка, web   */
+    --n-query:    #7c3aed;   /* запрос Power Query                        */
+    --n-table:    #059669;   /* умная таблица (ListObject)                */
+    --n-sheet:    #2563eb;   /* лист                                      */
+    --n-name:     #d97706;   /* именованный диапазон                      */
+    --n-pivot:    #db2777;   /* сводная таблица                           */
+    --n-measure:  #4f46e5;   /* мера модели данных                        */
+    --n-extbook:  #64748b;   /* внешняя книга                             */
+    --n-conn:     #0891b2;   /* подключение                               */
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: 'Manrope', system-ui, -apple-system, sans-serif;
+    background: var(--bg); color: var(--text);
+    display: flex; min-height: 100vh; overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ═══════════════════ SIDEBAR ═══════════════════ */
+.sidebar {
+    width: var(--sidebar-w); background: var(--sidebar-bg); color: #e2e8f0;
+    display: flex; flex-direction: column; position: fixed; height: 100vh; z-index: 1000;
+    transition: transform .3s cubic-bezier(.4,0,.2,1), width .3s cubic-bezier(.4,0,.2,1);
+    border-right: 1px solid rgba(255,255,255,.05);
+}
+.sidebar-header {
+    padding: 20px 24px; font-size: 13px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase; border-bottom: 1px solid rgba(255,255,255,.06);
+    display: flex; justify-content: space-between; align-items: center; color: #f8fafc;
+}
+.sidebar-header .brand {
+    background: linear-gradient(135deg, #34d399, #60a5fa);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.nav-menu { flex: 1; padding: 16px 0; display: flex; flex-direction: column; overflow-y: auto; }
+.nav-item {
+    padding: 12px 24px; cursor: pointer; display: flex; align-items: center; gap: 12px;
+    transition: all .2s; color: #94a3b8; font-weight: 600; font-size: 14px;
+    margin: 1px 0; border: none; background: none; width: 100%; text-align: left;
+    font-family: inherit; border-left: 3px solid transparent;
+}
+.nav-item:hover { background: var(--sidebar-hover); color: #e2e8f0; }
+.nav-item:focus-visible { outline: 2px solid #60a5fa; outline-offset: -2px; background: var(--sidebar-hover); color: #e2e8f0; }
+.nav-item.active { background: rgba(59,130,246,.1); color: #60a5fa; border-left-color: #3b82f6; }
+.nav-item:disabled { opacity: .35; cursor: not-allowed; }
+.nav-item:disabled:hover { background: none; color: #94a3b8; }
+.nav-item .nav-icon { width: 24px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.nav-item .nav-icon svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; }
+.nav-item .nav-label { flex: 1; min-width: 0; }
+.nav-badge {
+    font-size: 10px; padding: 3px 8px; border-radius: 6px; font-weight: 700;
+    background: rgba(59,130,246,.2); color: #60a5fa;
+}
+.nav-badge.warn { background: rgba(245,158,11,.2); color: #fbbf24; }
+.nav-badge.bad  { background: rgba(239,68,68,.2);  color: #f87171; }
+.sidebar-footer { padding: 14px 24px; border-top: 1px solid rgba(255,255,255,.06); font-size: 11px; color: #94a3b8; }
+.sidebar-collapse-btn {
+    display: none; background: none; border: none; color: #64748b; cursor: pointer;
+    padding: 5px; border-radius: 6px; transition: color .15s, background .15s;
+}
+.sidebar-collapse-btn:hover { color: #e2e8f0; background: rgba(255,255,255,.06); }
+.sidebar-collapse-btn svg { transition: transform .3s; display: block; }
+
+@media (min-width: 1025px) {
+    .sidebar-collapse-btn { display: inline-flex; align-items: center; }
+    body.sidebar-collapsed .sidebar { width: var(--sidebar-w-collapsed); }
+    body.sidebar-collapsed .main-wrapper { margin-left: var(--sidebar-w-collapsed); width: calc(100% - var(--sidebar-w-collapsed)); }
+    body.sidebar-collapsed .sidebar-header { justify-content: center; padding: 20px 0; }
+    body.sidebar-collapsed .sidebar-header .brand { display: none; }
+    body.sidebar-collapsed .sidebar-collapse-btn svg { transform: rotate(180deg); }
+    body.sidebar-collapsed .nav-item { justify-content: center; padding: 12px 0; gap: 0; }
+    body.sidebar-collapsed .nav-item .nav-label, body.sidebar-collapsed .nav-badge { display: none; }
+    body.sidebar-collapsed .sidebar-footer { display: none; }
+}
+
+/* ═══════════════════ MAIN ═══════════════════ */
+.main-wrapper {
+    margin-left: var(--sidebar-w); flex: 1; padding: 22px 26px;
+    width: calc(100% - var(--sidebar-w)); min-width: 0;
+    transition: margin-left .3s cubic-bezier(.4,0,.2,1), width .3s cubic-bezier(.4,0,.2,1);
+    display: flex; flex-direction: column;
+}
+.mobile-header {
+    display: none; background: var(--sidebar-bg); color: #fff;
+    padding: 12px 16px; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 900;
+}
+.menu-toggle { display: none; background: none; border: none; color: #fff; cursor: pointer; padding: 4px; }
+.menu-toggle svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 2; fill: none; display: block; }
+.overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 950; }
+.overlay.open { display: block; }
+
+.header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 12px; }
+.page-title { font-size: 21px; font-weight: 700; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.page-title .subtitle { font-size: 13px; font-weight: 500; color: var(--text-muted); }
+
+.page-content { display: none; width: 100%; }
+.page-content.active { display: flex !important; flex-direction: column; flex: 1; min-height: 0; }
+
+.card {
+    background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+    border: 1px solid var(--border-light); padding: 18px 20px; margin-bottom: 16px;
+}
+.card-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card-title .hint { font-size: 12px; font-weight: 500; color: var(--text-muted); }
+.muted { color: var(--text-muted); font-size: 13px; }
+.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+/* ═══════════════════ КНОПКИ ═══════════════════ */
+.btn {
+    border: none; color: #fff; background: var(--primary); padding: 8px 16px;
+    border-radius: 8px; font-weight: 600; cursor: pointer; display: inline-flex;
+    align-items: center; gap: 6px; white-space: nowrap; font-family: inherit;
+    font-size: 13px; transition: all .2s;
+}
+.btn svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2; fill: none; }
+.btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn:disabled { background: #cbd5e1; cursor: not-allowed; opacity: .6; transform: none; }
+.btn-outline { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+.btn-outline:hover { border-color: var(--primary); color: var(--primary); }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-export { background: var(--success); }
+.btn-purple { background: var(--purple); }
+
+/* ═══════════════════ ЭКРАН ЗАГРУЗКИ ═══════════════════ */
+.dropzone {
+    border: 2px dashed var(--border); border-radius: 16px; background: var(--card);
+    padding: 46px 26px; text-align: center; cursor: pointer;
+    transition: border-color .2s, background .2s, transform .15s;
+}
+.dropzone:hover, .dropzone:focus-visible { border-color: var(--primary); background: #f8fbff; outline: none; }
+.dropzone.dragover { border-color: var(--primary); background: var(--primary-light); transform: scale(1.006); }
+.dropzone .dz-icon { width: 54px; height: 54px; margin: 0 auto 14px; color: var(--primary); }
+.dropzone .dz-icon svg { width: 100%; height: 100%; stroke: currentColor; stroke-width: 1.5; fill: none; }
+.dropzone .dz-title { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+.dropzone .dz-sub { font-size: 13px; color: var(--text-muted); line-height: 1.6; }
+.dz-formats { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-top: 14px; }
+.dz-format { font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 6px; background: var(--border-light); color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; }
+
+.privacy-banner {
+    display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-radius: 10px;
+    background: var(--success-light); color: #065f46; font-size: 13px; font-weight: 600;
+    border: 1px solid #a7f3d0; margin-bottom: 16px;
+}
+.privacy-banner svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; flex-shrink: 0; }
+
+/* ═══════════════════ ПРОГРЕСС ═══════════════════ */
+.progress-box { margin-top: 18px; display: none; }
+.progress-box.on { display: block; }
+.progress-track { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, var(--primary), var(--purple)); width: 0%; transition: width .25s ease; }
+.progress-log {
+    margin-top: 10px; max-height: 168px; overflow-y: auto; font-size: 12px;
+    font-family: 'JetBrains Mono', monospace; color: var(--text-secondary); line-height: 1.75;
+}
+.progress-log .ok::before   { content: '✓ '; color: var(--success); }
+.progress-log .warn::before { content: '! '; color: var(--warning); }
+.progress-log .err::before  { content: '✕ '; color: var(--danger); }
+
+/* ═══════════════════ KPI ═══════════════════ */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi {
+    background: var(--card); border: 1px solid var(--border-light); border-radius: var(--radius);
+    padding: 14px 16px; box-shadow: var(--shadow); position: relative; overflow: hidden;
+}
+.kpi::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--kpi-color, var(--primary)); }
+.kpi .kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); font-weight: 700; margin-bottom: 5px; }
+.kpi .kpi-value { font-size: 25px; font-weight: 800; line-height: 1.1; font-family: 'JetBrains Mono', monospace; }
+.kpi .kpi-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+.kpi.clickable { cursor: pointer; transition: transform .15s, box-shadow .15s; }
+.kpi.clickable:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+
+/* Индекс здоровья файла */
+.health { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.health-ring { width: 116px; height: 116px; flex-shrink: 0; position: relative; }
+.health-ring svg { transform: rotate(-90deg); width: 100%; height: 100%; }
+.health-ring .hr-val {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; font-weight: 800;
+}
+.health-ring .hr-num { font-size: 29px; font-family: 'JetBrains Mono', monospace; line-height: 1; }
+.health-ring .hr-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted); margin-top: 3px; }
+.health-bars { flex: 1; min-width: 230px; display: flex; flex-direction: column; gap: 9px; }
+.health-bar-row { display: grid; grid-template-columns: 130px 1fr 40px; gap: 10px; align-items: center; font-size: 12px; }
+.health-bar-track { height: 7px; border-radius: 4px; background: var(--border-light); overflow: hidden; }
+.health-bar-fill { display: block; height: 100%; border-radius: 4px; transition: width .5s ease; }
+.health-bar-num { text-align: right; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12px; }
+
+/* ═══════════════════ ТАБЛИЦЫ ═══════════════════ */
+.table-box {
+    background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
+    overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--border-light);
+}
+table { width: 100%; border-collapse: collapse; }
+table.wide { min-width: 820px; }
+th {
+    background: #f8fafc; padding: 11px 13px; border-bottom: 2px solid var(--border);
+    font-size: 11px; font-weight: 700; text-align: left; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: .3px; position: sticky; top: 0; z-index: 2; white-space: nowrap;
+}
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--primary); }
+th.sortable::after { content: '↕'; opacity: .3; margin-left: 5px; font-size: 10px; }
+th.sortable.asc::after  { content: '↑'; opacity: 1; color: var(--primary); }
+th.sortable.desc::after { content: '↓'; opacity: 1; color: var(--primary); }
+td { padding: 9px 13px; border-bottom: 1px solid var(--border-light); font-size: 13px; vertical-align: top; }
+tbody tr:hover td { background: rgba(59,130,246,.03); }
+tr.row-link { cursor: pointer; }
+.num-cell { text-align: right; font-family: 'JetBrains Mono', monospace; white-space: nowrap; font-size: 12px; }
+.empty-state { padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+/* ═══════════════════ БЕЙДЖИ ═══════════════════ */
+.pill {
+    display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 6px;
+    font-size: 11px; font-weight: 700; white-space: nowrap; line-height: 1.7;
+}
+.pill-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.pill-gray   { background: #f1f5f9; color: #475569; }
+.pill-blue   { background: var(--primary-light); color: var(--primary-dark); }
+.pill-green  { background: var(--success-light); color: #047857; }
+.pill-amber  { background: var(--warning-light); color: #b45309; }
+.pill-red    { background: var(--danger-light);  color: #b91c1c; }
+.pill-purple { background: #ede9fe; color: var(--purple-dark); }
+.pill-teal   { background: #ccfbf1; color: #0f766e; }
+.pill-pink   { background: #fce7f3; color: #be185d; }
+
+/* Бейдж достоверности разбора — честно показываем пределы формата */
+.confidence {
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 8px;
+    font-size: 12px; font-weight: 600; border: 1px dashed;
+}
+.confidence.full    { background: var(--success-light); color: #065f46; border-color: #6ee7b7; }
+.confidence.partial { background: var(--warning-light); color: #92400e; border-color: #fcd34d; }
+.confidence.none    { background: var(--danger-light);  color: #991b1b; border-color: #fca5a5; }
+.confidence svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; fill: none; }
+</style>
+
+<style>
+/* ═══════════════════ ГРАФ СВЯЗЕЙ ═══════════════════ */
+.graph-shell { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 12px; }
+.graph-toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    background: var(--card); padding: 9px 12px; border-radius: var(--radius);
+    box-shadow: var(--shadow); border: 1px solid var(--border-light);
+}
+.graph-search { position: relative; flex: 1; min-width: 180px; max-width: 320px; }
+.graph-search input {
+    width: 100%; padding: 7px 12px 7px 32px; border-radius: 8px; border: 1px solid var(--border);
+    background: #f8fafc; font-family: inherit; font-size: 13px; color: var(--text);
+    transition: border-color .2s, box-shadow .2s;
+}
+.graph-search input:focus { outline: none; border-color: var(--primary); background: #fff; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+.graph-search .gs-icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--text-muted); display: flex; pointer-events: none; }
+.graph-search .gs-icon svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2; fill: none; }
+.gs-list {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 60; background: var(--card);
+    border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg);
+    max-height: 264px; overflow-y: auto; padding: 4px;
+}
+.gs-list[hidden] { display: none; }
+.gs-opt { padding: 7px 10px; border-radius: 7px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.gs-opt:hover, .gs-opt.active { background: var(--primary-light); }
+.gs-opt .gs-type { font-size: 10px; text-transform: uppercase; letter-spacing: .3px; color: var(--text-muted); font-weight: 700; margin-left: auto; }
+
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button {
+    padding: 6px 11px; background: var(--card); border: none; cursor: pointer;
+    font-family: inherit; font-size: 12px; font-weight: 600; color: var(--text-secondary);
+    border-right: 1px solid var(--border); transition: background .15s, color .15s;
+}
+.seg button:last-child { border-right: none; }
+.seg button:hover { background: var(--border-light); }
+.seg button.active { background: var(--primary-light); color: var(--primary-dark); }
+
+.chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; user-select: none; }
+.chk input { accent-color: var(--primary); width: 14px; height: 14px; cursor: pointer; }
+
+.graph-body { display: flex; flex: 1; min-height: 0; gap: 12px; }
+.graph-canvas-wrap {
+    flex: 1; min-width: 0; position: relative; background: var(--card);
+    border-radius: var(--radius); box-shadow: var(--shadow); border: 1px solid var(--border-light);
+    overflow: hidden;
+}
+#cy { width: 100%; height: 100%; min-height: 420px; }
+.graph-empty {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 8px; color: var(--text-muted); font-size: 13px; text-align: center; padding: 24px;
+}
+
+/* Легенда поверх холста */
+.graph-legend {
+    position: absolute; left: 12px; bottom: 12px; background: rgba(255,255,255,.94);
+    backdrop-filter: blur(6px); border: 1px solid var(--border); border-radius: 10px;
+    padding: 9px 11px; font-size: 11px; box-shadow: var(--shadow); max-width: min(300px, 62%);
+}
+.graph-legend .lg-title { padding-right: 20px; font-weight: 700; font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); margin-bottom: 6px; }
+.lg-items { display: flex; flex-wrap: wrap; gap: 4px 11px; }
+.lg-item { display: flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text-secondary); }
+.lg-swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.lg-swatch.round { border-radius: 50%; }
+.graph-legend .lg-toggle { position: absolute; top: 6px; right: 8px; background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 14px; line-height: 1; padding: 2px; }
+.graph-legend.collapsed .lg-items, .graph-legend.collapsed .lg-edges { display: none; }
+.lg-edges { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border-light); display: flex; flex-direction: column; gap: 3px; }
+.lg-edge { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text-secondary); }
+.lg-line { width: 22px; height: 0; border-top: 2px solid var(--text-muted); flex-shrink: 0; }
+.lg-line.dashed { border-top-style: dashed; }
+.lg-line.red { border-color: var(--danger); border-top-style: dashed; }
+
+/* Панель деталей узла */
+.graph-details {
+    width: 316px; flex-shrink: 0; background: var(--card); border-radius: var(--radius);
+    box-shadow: var(--shadow); border: 1px solid var(--border-light);
+    display: flex; flex-direction: column; overflow: hidden;
+}
+.gd-head { padding: 13px 15px; border-bottom: 1px solid var(--border-light); display: flex; align-items: flex-start; gap: 9px; }
+.gd-head .gd-title { font-size: 14px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; flex: 1; }
+.gd-head .gd-close { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 2px; line-height: 1; font-size: 18px; }
+.gd-body { padding: 13px 15px; overflow-y: auto; flex: 1; font-size: 13px; }
+.gd-section { margin-bottom: 15px; }
+.gd-section:last-child { margin-bottom: 0; }
+.gd-section h4 { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted); margin-bottom: 7px; font-weight: 700; }
+.gd-kv { display: grid; grid-template-columns: minmax(70px, auto) 1fr; gap: 3px 10px; font-size: 12px; }
+.gd-kv dt { color: var(--text-muted); font-weight: 600; }
+.gd-kv dd { font-weight: 600; overflow-wrap: anywhere; }
+.gd-link-list { display: flex; flex-direction: column; gap: 3px; }
+.gd-link {
+    display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 7px;
+    cursor: pointer; font-size: 12px; font-weight: 600; background: #f8fafc;
+    border: 1px solid transparent; transition: background .15s, border-color .15s;
+}
+.gd-link:hover { background: var(--primary-light); border-color: var(--primary); }
+.gd-link .gd-count { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); }
+.gd-empty { color: var(--text-muted); font-size: 12px; font-style: italic; }
+
+@media (max-width: 900px) {
+    .graph-body { flex-direction: column; }
+    .graph-details { width: 100%; max-height: 46vh; }
+}
+
+/* ═══════════════════ ТЕПЛОВАЯ КАРТА ЛИСТА ═══════════════════ */
+.heat-wrap { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.heat-canvas-box { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; line-height: 0; }
+.heat-canvas-box canvas { display: block; image-rendering: pixelated; max-width: 100%; }
+.heat-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
+.heat-legend .hl-item { display: flex; align-items: center; gap: 7px; font-weight: 600; color: var(--text-secondary); }
+.heat-legend .hl-sw { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,.08); }
+
+/* ═══════════════════ M-КОД / ФОРМУЛЫ ═══════════════════ */
+.code-box {
+    background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 14px 16px;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.65;
+    overflow-x: auto; white-space: pre; -webkit-overflow-scrolling: touch; tab-size: 4;
+}
+.code-box .m-kw   { color: #c4b5fd; font-weight: 700; }  /* let, in, each, if   */
+.code-box .m-str  { color: #86efac; }                    /* "строки"            */
+.code-box .m-com  { color: #64748b; font-style: italic; }/* // комментарии      */
+.code-box .m-fn   { color: #7dd3fc; }                    /* Table.SelectRows    */
+.code-box .m-num  { color: #fdba74; }
+.code-box .m-src  { color: #fca5a5; font-weight: 700; }  /* коннектор-источник  */
+
+.formula-box {
+    background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6;
+    overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.formula-box .f-sheet { background: #dbeafe; color: #1e40af; border-radius: 3px; padding: 0 2px; font-weight: 700; }
+.formula-box .f-table { background: #d1fae5; color: #065f46; border-radius: 3px; padding: 0 2px; font-weight: 700; }
+.formula-box .f-name  { background: #fef3c7; color: #92400e; border-radius: 3px; padding: 0 2px; font-weight: 700; }
+.formula-box .f-ext   { background: #e2e8f0; color: #334155; border-radius: 3px; padding: 0 2px; font-weight: 700; }
+.formula-box .f-err   { background: #fee2e2; color: #b91c1c; border-radius: 3px; padding: 0 2px; font-weight: 700; }
+.formula-box .f-vol   { background: #ffedd5; color: #9a3412; border-radius: 3px; padding: 0 2px; font-weight: 700; }
+.formula-box .f-str   { color: #059669; }
+
+/* Шаги запроса Power Query */
+.pq-steps { display: flex; flex-direction: column; gap: 0; }
+.pq-step { display: grid; grid-template-columns: 26px 1fr; gap: 10px; position: relative; padding-bottom: 12px; }
+.pq-step:last-child { padding-bottom: 0; }
+.pq-step::before { content: ''; position: absolute; left: 12px; top: 22px; bottom: 0; width: 2px; background: var(--border); }
+.pq-step:last-child::before { display: none; }
+.pq-step-num {
+    width: 25px; height: 25px; border-radius: 50%; background: var(--primary-light); color: var(--primary-dark);
+    display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800;
+    font-family: 'JetBrains Mono', monospace; z-index: 1; flex-shrink: 0;
+}
+.pq-step.is-source .pq-step-num { background: #ccfbf1; color: #0f766e; }
+.pq-step-name { font-size: 13px; font-weight: 700; margin-bottom: 3px; overflow-wrap: anywhere; }
+.pq-step-note { font-size: 11.5px; color: var(--text-muted); font-style: italic; margin-bottom: 4px; }
+.pq-step-expr {
+    font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--text-secondary);
+    background: #f8fafc; border: 1px solid var(--border-light); border-radius: 6px;
+    padding: 5px 8px; overflow-x: auto; white-space: pre; line-height: 1.55;
+}
+
+/* ═══════════════════ АУДИТ КАЧЕСТВА ═══════════════════ */
+.issue {
+    background: var(--card); border: 1px solid var(--border-light); border-left: 4px solid var(--sev-color, var(--border));
+    border-radius: 10px; margin-bottom: 9px; box-shadow: var(--shadow); overflow: hidden;
+}
+.issue-head { padding: 12px 15px; display: flex; align-items: flex-start; gap: 11px; cursor: pointer; }
+.issue-head:hover { background: #f8fafc; }
+.issue-icon { width: 19px; height: 19px; flex-shrink: 0; margin-top: 1px; color: var(--sev-color); }
+.issue-icon svg { width: 100%; height: 100%; stroke: currentColor; stroke-width: 2; fill: none; }
+.issue-main { flex: 1; min-width: 0; }
+.issue-title { font-size: 13.5px; font-weight: 700; margin-bottom: 2px; }
+.issue-desc { font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
+.issue-count { font-family: 'JetBrains Mono', monospace; font-weight: 800; font-size: 15px; color: var(--sev-color); flex-shrink: 0; }
+.issue-chevron { flex-shrink: 0; color: var(--text-muted); transition: transform .2s; }
+.issue-chevron svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2.4; fill: none; display: block; }
+.issue.open .issue-chevron { transform: rotate(90deg); }
+.issue-body { display: none; padding: 0 15px 14px 45px; }
+.issue.open .issue-body { display: block; }
+.issue-why { font-size: 12.5px; color: var(--text-secondary); background: #f8fafc; border-radius: 7px; padding: 9px 11px; margin-bottom: 10px; line-height: 1.6; }
+.issue-why strong { color: var(--text); }
+.issue-items { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; }
+.issue-item {
+    display: flex; align-items: baseline; gap: 9px; font-size: 12px; padding: 5px 9px;
+    background: #f8fafc; border-radius: 6px; font-family: 'JetBrains Mono', monospace;
+    overflow-wrap: anywhere;
+}
+.issue-item .ii-loc { font-weight: 700; color: var(--primary-dark); flex-shrink: 0; }
+.issue-item .ii-txt { color: var(--text-secondary); min-width: 0; }
+.sev-filter { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+
+/* ═══════════════════ МАТРИЦА ЛИСТ × ЛИСТ ═══════════════════ */
+.matrix-box { overflow: auto; max-height: 62vh; background: var(--card); border-radius: var(--radius); border: 1px solid var(--border-light); box-shadow: var(--shadow); }
+table.matrix { border-collapse: separate; border-spacing: 0; }
+table.matrix th, table.matrix td { border: 1px solid var(--border-light); padding: 0; }
+table.matrix th.corner { position: sticky; left: 0; top: 0; z-index: 5; background: #f1f5f9; min-width: 132px; font-size: 10px; padding: 6px 8px; }
+table.matrix th.col-h { position: sticky; top: 0; z-index: 4; background: #f8fafc; height: 108px; vertical-align: bottom; padding: 0; }
+table.matrix th.col-h .rot { writing-mode: vertical-rl; transform: rotate(180deg); padding: 8px 5px; font-size: 11px; text-transform: none; letter-spacing: 0; max-height: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+table.matrix th.row-h { position: sticky; left: 0; z-index: 3; background: #f8fafc; text-align: left; padding: 6px 9px; font-size: 11.5px; text-transform: none; letter-spacing: 0; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+table.matrix td.cell { width: 34px; height: 30px; text-align: center; font-size: 11px; font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+table.matrix td.cell.diag { background: repeating-linear-gradient(45deg, #f8fafc, #f8fafc 4px, #eef2f7 4px, #eef2f7 8px); }
+table.matrix td.cell[data-n] { cursor: default; }
+
+/* ═══════════════════ УВЕДОМЛЕНИЯ / МОДАЛКА ═══════════════════ */
+.notification-stack { position: fixed; top: 18px; right: 18px; z-index: 3000; display: flex; flex-direction: column; gap: 8px; max-width: min(420px, calc(100vw - 36px)); }
+.notification {
+    padding: 11px 15px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    box-shadow: var(--shadow-lg); display: flex; align-items: flex-start; gap: 9px;
+    animation: notifIn .22s cubic-bezier(.4,0,.2,1);
+}
+@keyframes notifIn { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+.notification-error   { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.notification-success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.notification-info    { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+.notification-close { margin-left: auto; background: none; border: none; cursor: pointer; opacity: .55; font-size: 17px; line-height: 1; color: inherit; padding: 0 0 0 6px; }
+.notification-close:hover { opacity: 1; }
+
+/* ═══════════════════ АДАПТИВ ═══════════════════ */
+@media (max-width: 1024px) {
+    .sidebar { transform: translateX(-100%); }
+    .sidebar.open { transform: translateX(0); }
+    .main-wrapper { margin-left: 0; width: 100%; padding: 16px; }
+    /* Отрицательные поля компенсируют padding .main-wrapper, чтобы шапка шла от края до края */
+    .mobile-header { display: flex; margin: -16px -16px 14px; }
+    .menu-toggle { display: block; }
+    .graph-details { width: 100%; }
+}
+@media (max-width: 640px) {
+    .main-wrapper { padding: 13px; }
+    .mobile-header { margin: -13px -13px 12px; }
+    .kpi-grid { grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: 9px; }
+    .kpi .kpi-value { font-size: 21px; }
+    .page-title { font-size: 18px; }
+    .card { padding: 14px; }
+    .dropzone { padding: 30px 16px; }
+    .health { gap: 14px; }
+    .health-bars { min-width: 100%; }
+    /* Уведомление сверху перекрывало кнопку меню — на телефоне уводим стек вниз */
+    .notification-stack { top: auto; bottom: 14px; left: 14px; right: 14px; max-width: none; }
+    .health-bar-row { grid-template-columns: 108px 1fr 32px; font-size: 10.5px; }
+    .issue-body { padding-left: 15px; }
+    /* На телефоне граф остаётся доступным, но не претендует на роль главного экрана */
+    .graph-body { flex-direction: column; }
+    #cy { min-height: 320px; }
+}
+@media print {
+    .sidebar, .overlay, .mobile-header, .notification-stack, .graph-toolbar, .dropzone { display: none !important; }
+    .main-wrapper { margin-left: 0; width: 100%; }
+    .card, .table-box { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+
+<div class="notification-stack" id="notification-stack" role="status" aria-live="polite"></div>
+<div class="overlay" id="overlay" aria-hidden="true"></div>
+
+<!-- ─────────────── SIDEBAR ─────────────── -->
+<aside class="sidebar" id="sidebar" role="complementary" aria-label="Навигация">
+    <div class="sidebar-header">
+        <span class="brand">XLS EXPLORER</span>
+        <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" aria-label="Свернуть меню" title="Свернуть меню">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
+        </button>
+        <button class="menu-toggle" id="sidebar-close-btn" style="color:#64748b" aria-label="Закрыть меню">
+            <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+    </div>
+
+    <nav class="nav-menu" role="tablist" aria-label="Разделы">
+        <button class="nav-item active" data-page="upload" role="tab" aria-selected="true" aria-controls="page-upload">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+            <span class="nav-label">Загрузка</span>
+        </button>
+        <button class="nav-item" data-page="overview" role="tab" aria-selected="false" aria-controls="page-overview" disabled>
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg></span>
+            <span class="nav-label">Обзор</span>
+        </button>
+        <button class="nav-item" data-page="graph" role="tab" aria-selected="false" aria-controls="page-graph" disabled>
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 6.8c5 1 6.5 2.6 9 4.4"/><path d="M7.5 17.2c5-1 6.5-2.6 9-4.4"/></svg></span>
+            <span class="nav-label">Граф связей</span>
+            <span class="nav-badge" id="badge-graph" hidden></span>
+        </button>
+        <button class="nav-item" data-page="sheets" role="tab" aria-selected="false" aria-controls="page-sheets" disabled>
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/></svg></span>
+            <span class="nav-label">Листы и таблицы</span>
+            <span class="nav-badge" id="badge-sheets" hidden></span>
+        </button>
+        <button class="nav-item" data-page="formulas" role="tab" aria-selected="false" aria-controls="page-formulas" disabled>
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16"/><path d="M4 4l7 8-7 8h16"/></svg></span>
+            <span class="nav-label">Формулы и ссылки</span>
+        </button>
+        <button class="nav-item" data-page="pq" role="tab" aria-selected="false" aria-controls="page-pq" disabled>
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span>
+            <span class="nav-label">Power Query</span>
+            <span class="nav-badge" id="badge-pq" hidden></span>
+        </button>
+        <button class="nav-item" data-page="model" role="tab" aria-selected="false" aria-controls="page-model" disabled>
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="8.5" y="9.5" width="7" height="5" rx="1"/><rect x="2" y="2" width="6" height="4" rx="1"/><rect x="16" y="2" width="6" height="4" rx="1"/><rect x="2" y="18" width="6" height="4" rx="1"/><rect x="16" y="18" width="6" height="4" rx="1"/><path d="M8 5h1.5a2 2 0 0 1 2 2v2.5"/><path d="M16 5h-1.5a2 2 0 0 0-2 2v2.5"/><path d="M8 20H9.5a2 2 0 0 0 2-2v-3.5"/><path d="M16 20h-1.5a2 2 0 0 1-2-2v-3.5"/></svg></span>
+            <span class="nav-label">Модель данных</span>
+        </button>
+        <button class="nav-item" data-page="quality" role="tab" aria-selected="false" aria-controls="page-quality" disabled>
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.5 20.5 6v6c0 5.2-3.6 8.6-8.5 9.9C7.1 20.6 3.5 17.2 3.5 12V6z"/><path d="m9 12 2 2 4-4"/></svg></span>
+            <span class="nav-label">Качество данных</span>
+            <span class="nav-badge" id="badge-quality" hidden></span>
+        </button>
+
+        <div style="flex:1"></div>
+        <div style="border-top:1px solid rgba(255,255,255,.06);margin:4px 16px"></div>
+
+        <button class="nav-item" data-page="report" role="tab" aria-selected="false" aria-controls="page-report" disabled>
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></span>
+            <span class="nav-label">Отчёт и экспорт</span>
+        </button>
+    </nav>
+
+    <div class="sidebar-footer">
+        v0.1.0 · всё считается локально<br>
+        <span id="sidebar-file" class="mono" style="color:#cbd5e1"></span>
+    </div>
+</aside>
+
+<main class="main-wrapper" id="main">
+
+<!-- ─────────────── MOBILE HEADER ─────────────── -->
+<div class="mobile-header">
+    <button class="menu-toggle" id="mobile-menu-btn" aria-label="Открыть меню">
+        <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <strong style="font-size:13px;letter-spacing:1.5px">XLS EXPLORER</strong>
+    <span style="width:22px"></span>
+</div>
+
+
+<!-- ═══════════ ЗАГРУЗКА ═══════════ -->
+<section class="page-content active" id="page-upload" role="tabpanel" aria-labelledby="nav-upload">
+    <div class="header-top">
+        <h1 class="page-title">Загрузка книги <span class="subtitle">разбор целиком в браузере</span></h1>
+    </div>
+
+    <div class="privacy-banner">
+        <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span>Файл не покидает ваш компьютер: ни байта не уходит в сеть. Сеть нужна только для первичной загрузки библиотек.</span>
+    </div>
+
+    <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Выбрать файл Excel">
+        <div class="dz-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9.5 12.5 5 5"/><path d="m14.5 12.5-5 5"/></svg></div>
+        <div class="dz-title">Перетащите книгу сюда или нажмите, чтобы выбрать</div>
+        <div class="dz-sub">Можно сразу несколько файлов — тогда построится граф связей между книгами</div>
+        <div class="dz-formats">
+            <span class="dz-format">.xlsx</span><span class="dz-format">.xlsm</span>
+            <span class="dz-format">.xlsb</span><span class="dz-format">.xls</span><span class="dz-format">.xltx</span>
+        </div>
+        <input type="file" id="file-input" multiple accept=".xlsx,.xlsm,.xlsb,.xls,.xltx,.xltm" hidden>
+    </div>
+
+    <div class="progress-box" id="progress-box">
+        <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="progress-log" id="progress-log"></div>
+    </div>
+
+    <div id="loaded-list" style="margin-top:16px"></div>
+
+    <div class="card" style="margin-top:16px">
+        <div class="card-title">Что именно достаётся из файла</div>
+        <p class="muted" style="margin-bottom:12px;line-height:1.65">
+            Возможности жёстко ограничены форматом, а не инструментом. Ниже — честная картина; те же бейджи
+            вы увидите на соответствующих вкладках.
+        </p>
+        <div class="table-box">
+            <table class="wide">
+                <thead><tr><th>Что</th><th>xlsx / xlsm</th><th>xlsb</th><th>xls</th></tr></thead>
+                <tbody id="capability-table"></tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════ ОБЗОР ═══════════ -->
+<section class="page-content" id="page-overview" role="tabpanel">
+    <div class="header-top">
+        <h1 class="page-title">Обзор <span class="subtitle" id="overview-sub"></span></h1>
+        <button class="btn btn-outline btn-sm" data-goto="upload">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Другой файл
+        </button>
+    </div>
+    <div class="kpi-grid" id="overview-kpi"></div>
+    <div class="card">
+        <div class="card-title">Индекс здоровья книги <span class="hint">0 — всё плохо, 100 — к файлу нет претензий</span></div>
+        <div class="health" id="overview-health"></div>
+    </div>
+    <div class="card">
+        <div class="card-title">Главное, на что стоит посмотреть</div>
+        <div id="overview-top-issues"></div>
+    </div>
+    <div class="card">
+        <div class="card-title">Паспорт файла</div>
+        <div class="table-box"><table class="wide"><tbody id="overview-props"></tbody></table></div>
+    </div>
+</section>
+
+<!-- ═══════════ ГРАФ ═══════════ -->
+<section class="page-content" id="page-graph" role="tabpanel">
+    <div class="header-top">
+        <h1 class="page-title">Граф связей <span class="subtitle">откуда что берётся</span></h1>
+    </div>
+    <div class="graph-shell">
+        <div class="graph-toolbar">
+            <div class="graph-search">
+                <span class="gs-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+                <input type="text" id="graph-search-input" placeholder="Найти лист, таблицу, запрос…" autocomplete="off" aria-label="Поиск по графу">
+                <div class="gs-list" id="graph-search-list" hidden></div>
+            </div>
+            <div class="seg" role="group" aria-label="Раскладка графа">
+                <button data-layout="dagre-lr" class="active" title="Слои слева направо: источники → запросы → листы">Потоком →</button>
+                <button data-layout="dagre-tb" title="Слои сверху вниз">Слоями ↓</button>
+                <button data-layout="cose"    title="Силовая раскладка: видно кластеры">Кластерами</button>
+            </div>
+            <label class="chk" title="Показывать листы внутри рамки книги"><input type="checkbox" id="opt-groups" checked> Группировать по книгам</label>
+            <label class="chk" title="Скрыть узлы без единой связи"><input type="checkbox" id="opt-orphans" checked> Одиночные узлы</label>
+            <label class="chk" title="INDIRECT/OFFSET и подобные — ссылки, которые собираются во время расчёта"><input type="checkbox" id="opt-invisible" checked> «Невидимые» связи</label>
+            <div style="flex:1"></div>
+            <button class="btn btn-outline btn-sm" id="btn-graph-fit" title="Вписать в экран">
+                <svg viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/></svg>
+                Вписать
+            </button>
+            <button class="btn btn-outline btn-sm" id="btn-graph-reset" title="Снять фокус и фильтры">Сброс</button>
+            <button class="btn btn-outline btn-sm" id="btn-graph-png" title="Сохранить граф картинкой">
+                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                PNG
+            </button>
+        </div>
+
+        <div class="graph-body">
+            <div class="graph-canvas-wrap">
+                <div id="cy"></div>
+                <div class="graph-legend collapsed" id="graph-legend">
+                    <button class="lg-toggle" id="lg-toggle" aria-label="Развернуть легенду" title="Легенда">▾</button>
+                    <div class="lg-title">Легенда</div>
+                    <div class="lg-items" id="lg-items"></div>
+                    <div class="lg-edges">
+                        <div class="lg-edge"><span class="lg-line"></span> ссылка формулы</div>
+                        <div class="lg-edge"><span class="lg-line dashed"></span> загрузка данных (PQ, сводная)</div>
+                        <div class="lg-edge"><span class="lg-line red"></span> «невидимая» связь / проблема</div>
+                    </div>
+                </div>
+                <div class="graph-empty" id="graph-empty" hidden></div>
+            </div>
+
+            <aside class="graph-details" id="graph-details" hidden>
+                <div class="gd-head">
+                    <div class="gd-title" id="gd-title"></div>
+                    <button class="gd-close" id="gd-close" aria-label="Закрыть панель">×</button>
+                </div>
+                <div class="gd-body" id="gd-body"></div>
+            </aside>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════ ЛИСТЫ И ТАБЛИЦЫ ═══════════ -->
+<section class="page-content" id="page-sheets" role="tabpanel">
+    <div class="header-top">
+        <h1 class="page-title">Листы и таблицы <span class="subtitle">инвентарь книги</span></h1>
+    </div>
+    <div class="card">
+        <div class="card-title">
+            Листы
+            <span class="hint">клик по строке — тепловая карта листа и его связи</span>
+        </div>
+        <div class="table-box">
+            <table class="wide" id="sheets-table">
+                <thead><tr>
+                    <th class="sortable" data-sort="name">Лист</th>
+                    <th class="sortable" data-sort="state">Статус</th>
+                    <th class="sortable" data-sort="role">Роль</th>
+                    <th class="sortable num-cell" data-sort="formulas">Формул</th>
+                    <th class="sortable num-cell" data-sort="consts">Констант</th>
+                    <th class="sortable num-cell" data-sort="errors">Ошибок</th>
+                    <th class="sortable num-cell" data-sort="inDeg">Входит</th>
+                    <th class="sortable num-cell" data-sort="outDeg">Исходит</th>
+                    <th class="sortable" data-sort="dim">Диапазон</th>
+                </tr></thead>
+                <tbody id="sheets-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card" id="sheet-detail-card" hidden>
+        <div class="card-title">
+            <span id="sheet-detail-title"></span>
+            <span class="hint">тепловая карта: каждый пиксель — ячейка</span>
+        </div>
+        <div class="heat-wrap">
+            <div class="heat-canvas-box"><canvas id="heat-canvas" width="240" height="240"></canvas></div>
+            <div>
+                <div class="heat-legend" style="margin-bottom:12px">
+                    <div class="hl-item"><span class="hl-sw" style="background:#2563eb"></span> формула</div>
+                    <div class="hl-item"><span class="hl-sw" style="background:#f59e0b"></span> константа (число)</div>
+                    <div class="hl-item"><span class="hl-sw" style="background:#94a3b8"></span> текст</div>
+                    <div class="hl-item"><span class="hl-sw" style="background:#ef4444"></span> ошибка</div>
+                    <div class="hl-item"><span class="hl-sw" style="background:#f8fafc;border-color:#cbd5e1"></span> пусто</div>
+                </div>
+                <div id="sheet-detail-info" class="muted" style="line-height:1.8"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Умные таблицы (ListObject) <span class="hint" id="tables-hint"></span></div>
+        <div class="table-box">
+            <table class="wide">
+                <thead><tr><th>Таблица</th><th>Лист</th><th>Диапазон</th><th class="num-cell">Колонок</th><th>Источник</th><th>Колонки</th></tr></thead>
+                <tbody id="tables-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Именованные диапазоны</div>
+        <div class="table-box">
+            <table class="wide">
+                <thead><tr><th>Имя</th><th>Область</th><th>Ссылается на</th><th>Использований</th><th>Статус</th></tr></thead>
+                <tbody id="names-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════ ФОРМУЛЫ ═══════════ -->
+<section class="page-content" id="page-formulas" role="tabpanel">
+    <div class="header-top">
+        <h1 class="page-title">Формулы и ссылки <span class="subtitle" id="formulas-sub"></span></h1>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Матрица ссылок между листами <span class="hint">строка ссылается на колонку; число — сколько ссылок</span></div>
+        <div id="matrix-holder"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Внешние ссылки на другие книги</div>
+        <div class="table-box">
+            <table class="wide">
+                <thead><tr><th>№</th><th>Путь к книге</th><th>Где используется</th><th>Статус</th></tr></thead>
+                <tbody id="extlinks-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px">
+        <div class="card" style="margin:0">
+            <div class="card-title">Самые используемые функции</div>
+            <div class="table-box">
+                <table><thead><tr><th>Функция</th><th class="num-cell">Вхождений</th><th>Заметка</th></tr></thead><tbody id="funcs-tbody"></tbody></table>
+            </div>
+        </div>
+        <div class="card" style="margin:0">
+            <div class="card-title">Самые длинные формулы <span class="hint">кандидаты на распил</span></div>
+            <div id="longest-formulas"></div>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════ POWER QUERY ═══════════ -->
+<section class="page-content" id="page-pq" role="tabpanel">
+    <div class="header-top">
+        <h1 class="page-title">Power Query <span class="subtitle" id="pq-sub"></span></h1>
+        <button class="btn btn-outline btn-sm" id="btn-export-m" disabled>
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Выгрузить весь M-код
+        </button>
+    </div>
+    <div id="pq-content"></div>
+</section>
+
+<!-- ═══════════ МОДЕЛЬ ДАННЫХ ═══════════ -->
+<section class="page-content" id="page-model" role="tabpanel">
+    <div class="header-top">
+        <h1 class="page-title">Модель данных <span class="subtitle">Power Pivot</span></h1>
+    </div>
+    <div id="model-content"></div>
+</section>
+
+<!-- ═══════════ КАЧЕСТВО ═══════════ -->
+<section class="page-content" id="page-quality" role="tabpanel">
+    <div class="header-top">
+        <h1 class="page-title">Качество данных <span class="subtitle" id="quality-sub"></span></h1>
+    </div>
+    <div class="sev-filter" id="sev-filter"></div>
+    <div id="quality-list"></div>
+</section>
+
+<!-- ═══════════ ОТЧЁТ ═══════════ -->
+<section class="page-content" id="page-report" role="tabpanel">
+    <div class="header-top">
+        <h1 class="page-title">Отчёт и экспорт <span class="subtitle">документация книги за один клик</span></h1>
+    </div>
+    <div class="card">
+        <div class="card-title">Что выгрузить</div>
+        <p class="muted" style="margin-bottom:14px;line-height:1.65">
+            Всё формируется прямо в браузере и скачивается как обычный файл.
+        </p>
+        <div style="display:flex;gap:9px;flex-wrap:wrap">
+            <button class="btn btn-export" id="btn-export-md">
+                <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                Паспорт книги (Markdown)
+            </button>
+            <button class="btn btn-purple" id="btn-export-json">
+                <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                Граф целиком (JSON)
+            </button>
+            <button class="btn btn-outline" id="btn-export-csv">
+                <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                Реестр находок (CSV)
+            </button>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-title">Предпросмотр паспорта</div>
+        <div class="code-box" id="report-preview" style="max-height:52vh;overflow-y:auto;white-space:pre-wrap"></div>
+    </div>
+</section>
+
+</main>
+
+<script>
+'use strict';
+
+/* ════════════════════════════════════════════════════════════════════════════
+   XLS EXPLORER — ядро
+   Разбор идёт послойно: ZIP → части OOXML → сущности → ГРАФ → проекции (вкладки).
+   Единая графовая модель принципиальна: иначе вкладки начнут расходиться в показаниях.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+const APP = {
+    books: [],          // разобранные книги
+    graph: { nodes: [], edges: [] },
+    issues: [],
+    health: null,
+    activeSheet: null,
+};
+
+/* ───────────────────────── мелкие утилиты ───────────────────────── */
+
+const $  = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+/** Экранирование для вставки в innerHTML. Пользовательские данные (имена листов,
+ *  формулы, пути) могут содержать < > & — без этого вёрстка поедет. */
+function esc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** Раскодирование XML-сущностей в тексте формул и имён. */
+function unesc(s) {
+    if (s.indexOf('&') === -1) return s;
+    return s.replace(/&(#x?[0-9a-fA-F]+|amp|lt|gt|quot|apos);/g, (m, e) => {
+        if (e === 'amp') return '&';
+        if (e === 'lt') return '<';
+        if (e === 'gt') return '>';
+        if (e === 'quot') return '"';
+        if (e === 'apos') return "'";
+        if (e[0] === '#') return String.fromCodePoint(parseInt(e[1] === 'x' ? e.slice(2) : e.slice(1), e[1] === 'x' ? 16 : 10));
+        return m;
+    });
+}
+
+const fmtNum = n => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString('ru-RU');
+
+function fmtBytes(b) {
+    if (b < 1024) return b + ' Б';
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' КБ';
+    return (b / 1048576).toFixed(1) + ' МБ';
+}
+
+function fmtDate(s) {
+    if (!s) return '—';
+    const d = new Date(s);
+    return isNaN(d) ? s : d.toLocaleString('ru-RU', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/** Ждём кадр отрисовки — даёт прогресс-бару перерисоваться между этапами разбора. */
+const nextFrame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+
+function showNotification(message, type = 'error', duration = 6000) {
+    const stack = $('#notification-stack');
+    const div = document.createElement('div');
+    div.className = 'notification notification-' + type;
+    div.innerHTML = '<span>' + esc(message) + '</span><button class="notification-close" aria-label="Закрыть">×</button>';
+    div.querySelector('.notification-close').onclick = () => div.remove();
+    stack.appendChild(div);
+    if (duration) setTimeout(() => div.remove(), duration);
+}
+
+function download(filename, content, mime) {
+    const blob = new Blob([content], { type: (mime || 'text/plain') + ';charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+/* ───────────────────────── навигация ───────────────────────── */
+
+function goPage(page) {
+    $$('.nav-item').forEach(b => {
+        const on = b.dataset.page === page;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    $$('.page-content').forEach(p => p.classList.toggle('active', p.id === 'page-' + page));
+    $('#sidebar').classList.remove('open');
+    $('#overlay').classList.remove('open');
+    window.scrollTo(0, 0);
+    // Cytoscape при скрытом контейнере считает размер нулевым — пересчитываем при показе
+    if (page === 'graph' && window.__cy) setTimeout(() => { window.__cy.resize(); window.__cy.fit(undefined, 40); }, 30);
+}
+
+function unlockPages() {
+    $$('.nav-item[disabled]').forEach(b => { b.disabled = false; });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   РАБОТА С ЯЧЕЙКАМИ И ССЫЛКАМИ
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** "AB12" → {c: 27, r: 11} (0-based). Возвращает null для мусора. */
+function parseCellRef(ref) {
+    const m = /^([A-Z]{1,3})(\d{1,7})$/.exec(ref);
+    if (!m) return null;
+    let c = 0;
+    for (let i = 0; i < m[1].length; i++) c = c * 26 + (m[1].charCodeAt(i) - 64);
+    return { c: c - 1, r: parseInt(m[2], 10) - 1 };
+}
+
+function colName(idx) {
+    let s = '';
+    idx++;
+    while (idx > 0) { const r = (idx - 1) % 26; s = String.fromCharCode(65 + r) + s; idx = (idx - r - 1) / 26; }
+    return s;
+}
+
+/** Летучие функции: пересчитываются при каждом чихе Excel и тормозят книгу. */
+const VOLATILE_FUNCS = new Set(['NOW', 'TODAY', 'RAND', 'RANDBETWEEN', 'RANDARRAY', 'OFFSET', 'INDIRECT', 'CELL', 'INFO']);
+
+/** Функции, собирающие ссылку строкой во время расчёта. Статический граф их не видит —
+ *  и именно на них чаще всего разваливаются чужие книги при перестановке листов. */
+const INVISIBLE_FUNCS = new Set(['INDIRECT', 'OFFSET']);
+
+const ERROR_LITERALS = ['#REF!', '#DIV/0!', '#N/A', '#VALUE!', '#NAME?', '#NULL!', '#NUM!', '#SPILL!', '#CALC!', '#GETTING_DATA'];
+
+/**
+ * Разбор формулы на ссылки.
+ *
+ * Это самая коварная часть проекта: нужно корректно пройти строковые литералы,
+ * имена листов в апострофах, внешние ссылки и структурированные ссылки таблиц,
+ * не приняв кусок текста за ссылку. Поэтому — честный посимвольный разбор,
+ * а не «регулярка на всё сразу».
+ *
+ * Возвращает: { sheets:Set, tables:Set, names:Set, ext:Set, funcs:Map, flags:{...} }
+ */
+function scanFormula(f) {
+    const out = {
+        sheets: new Set(),   // имена листов, на которые ссылается формула
+        tables: new Set(),   // умные таблицы (структурированные ссылки)
+        names:  new Set(),   // именованные диапазоны
+        ext:    new Set(),   // внешние книги: '[1]' или путь
+        funcs:  new Map(),   // функция → сколько раз
+        flags:  { volatile: false, invisible: false, wholeCol: false, error: null, array: false },
+    };
+    if (!f) return out;
+
+    const n = f.length;
+    let i = 0;
+
+    const addFunc = name => {
+        out.funcs.set(name, (out.funcs.get(name) || 0) + 1);
+        if (VOLATILE_FUNCS.has(name)) out.flags.volatile = true;
+        if (INVISIBLE_FUNCS.has(name)) out.flags.invisible = true;
+    };
+
+    /** '[1]Лист' / 'C:\путь\[Книга.xlsx]Лист' / 'Лист1:Лист3' → регистрируем что нашли */
+    const addQualified = raw => {
+        let book = null, sheetPart = raw;
+        const mExt = /^\[(\d+)\](.*)$/.exec(raw);                 // [1]Лист
+        if (mExt) { book = '[' + mExt[1] + ']'; sheetPart = mExt[2]; }
+        else {
+            const mPath = /^(.*\[[^\]]+\])(.*)$/.exec(raw);       // C:\dir\[Book.xlsx]Лист
+            if (mPath) { book = mPath[1]; sheetPart = mPath[2]; }
+        }
+        if (book) out.ext.add(book);
+        // Трёхмерная ссылка Лист1:Лист3 — оба конца значимы
+        sheetPart.split(':').forEach(s => { if (s) out.sheets.add(s); });
+    };
+
+    while (i < n) {
+        const ch = f[i];
+
+        // ── строковый литерал "…" (кавычка удваивается)
+        if (ch === '"') {
+            i++;
+            while (i < n) {
+                if (f[i] === '"') { if (f[i + 1] === '"') { i += 2; continue; } i++; break; }
+                i++;
+            }
+            continue;
+        }
+
+        // ── имя в апострофах: 'Лист с пробелом'!A1
+        if (ch === "'") {
+            i++;
+            let raw = '';
+            while (i < n) {
+                if (f[i] === "'") { if (f[i + 1] === "'") { raw += "'"; i += 2; continue; } i++; break; }
+                raw += f[i]; i++;
+            }
+            if (f[i] === '!') { addQualified(raw); i++; }
+            continue;
+        }
+
+        // ── ошибка прямо в тексте формулы: =#REF!+1
+        if (ch === '#') {
+            const lit = ERROR_LITERALS.find(e => f.startsWith(e, i));
+            if (lit) { out.flags.error = out.flags.error || lit; i += lit.length; continue; }
+        }
+
+        // ── внешняя ссылка без апострофов: [1]Лист1!A1
+        if (ch === '[') {
+            const close = f.indexOf(']', i);
+            if (close !== -1 && /^\d+$/.test(f.slice(i + 1, close))) {
+                let j = close + 1, sheet = '';
+                while (j < n && f[j] !== '!' && f[j] !== ' ' && f[j] !== ')' && f[j] !== ',') { sheet += f[j]; j++; }
+                out.ext.add(f.slice(i, close + 1));
+                if (sheet) out.sheets.add(sheet);
+                i = j + (f[j] === '!' ? 1 : 0);
+                continue;
+            }
+            // [@Колонка] — ссылка на текущую строку своей же таблицы, имени таблицы нет
+            const bal = skipBrackets(f, i);
+            i = bal;
+            continue;
+        }
+
+        // ── идентификатор: функция / имя листа / имя таблицы / имя диапазона / адрес ячейки
+        if (/[A-Za-z_\u0400-\u04FF\u00C0-\u024F\\]/.test(ch)) {
+            let j = i;
+            while (j < n && /[A-Za-z0-9_.\u0400-\u04FF\u00C0-\u024F\\$]/.test(f[j])) j++;
+            let word = f.slice(i, j);
+
+            if (f[j] === '(') {                                  // функция
+                addFunc(word.toUpperCase().replace(/^_XLFN\./, ''));
+                i = j + 1;
+                continue;
+            }
+            if (f[j] === '!') {                                  // Лист1!A1
+                addQualified(word);
+                i = j + 1;
+                continue;
+            }
+            if (f[j] === '[') {                                  // Таблица1[Колонка]
+                out.tables.add(word);
+                i = skipBrackets(f, j);
+                continue;
+            }
+            if (f[j] === ':' && /^\$?[A-Z]{1,3}$/i.test(word)) { // A:A — ссылка на всю колонку
+                let k = j + 1, w2 = '';
+                while (k < n && /[A-Z$]/i.test(f[k])) { w2 += f[k]; k++; }
+                if (/^\$?[A-Z]{1,3}$/i.test(w2) && !/\d/.test(w2)) { out.flags.wholeCol = true; i = k; continue; }
+            }
+
+            const bare = word.replace(/\$/g, '');
+            if (!/^\$?[A-Z]{1,3}\$?\d{1,7}$/i.test(bare) && !/^(TRUE|FALSE)$/i.test(bare) && bare.length > 1) {
+                out.names.add(bare);                             // именованный диапазон
+            }
+            i = j;
+            continue;
+        }
+
+        i++;
+    }
+    return out;
+}
+
+/** Пропускает сбалансированный блок […] начиная с позиции open. Возвращает индекс за ним. */
+function skipBrackets(s, open) {
+    let depth = 0, i = open;
+    while (i < s.length) {
+        if (s[i] === '[') depth++;
+        else if (s[i] === ']') { depth--; if (depth === 0) return i + 1; }
+        i++;
+    }
+    return s.length;
+}
+
+/** Подсветка формулы для панели деталей: листы, таблицы, имена, ошибки, летучие функции. */
+function highlightFormula(f) {
+    const s = scanFormula(f);
+    let html = esc(f);
+    const wrap = (re, cls) => { html = html.replace(re, m => '<span class="' + cls + '">' + m + '</span>'); };
+    ERROR_LITERALS.forEach(e => wrap(new RegExp(esc(e).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), 'f-err'));
+    s.sheets.forEach(sh => { if (sh.length > 1) wrap(new RegExp(escapeRe(esc(sh)) + '(?=!)', 'g'), 'f-sheet'); });
+    s.tables.forEach(t => wrap(new RegExp('\\b' + escapeRe(esc(t)) + '(?=\\[)', 'g'), 'f-table'));
+    s.funcs.forEach((_, fn) => { if (VOLATILE_FUNCS.has(fn)) wrap(new RegExp('\\b' + escapeRe(fn) + '(?=\\()', 'gi'), 'f-vol'); });
+    return html;
+}
+
+const escapeRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/* Идентификаторы в M могут быть юникодными: `shared Источник_SQL = …` — совершенно
+   легальное имя запроса. Классы вынесены в константы, чтобы не разъезжались по коду. */
+const ID_START = 'A-Za-z_\\u0400-\\u04FF\\u00C0-\\u024F';
+const ID_CHAR  = 'A-Za-z0-9_.\\u0400-\\u04FF\\u00C0-\\u024F';
+const RE_M_NAME  = new RegExp('^([' + ID_START + '][' + ID_CHAR + ']*)');
+const RE_M_PLAIN = new RegExp('^[' + ID_START + '][' + ID_CHAR + ']*$');
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   РАЗБОР OOXML
+   Книга .xlsx/.xlsm — это ZIP с XML внутри. Достаём части по одной.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const RELS_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const HEAT_MAX = 220;                    // размер тепловой карты в «пикселях» по стороне
+const MAX_SHEET_SCAN = 40 * 1024 * 1024; // выше этого лист считаем по-крупному, без разбора ячеек
+
+const dec = new TextDecoder('utf-8');
+const xmlDoc = s => new DOMParser().parseFromString(s, 'application/xml');
+const els = (root, tag) => Array.from(root.getElementsByTagNameNS('*', tag));
+const relId = el => el.getAttributeNS(RELS_NS, 'id') || el.getAttribute('r:id');
+
+function detectFormat(bytes, name) {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    if (bytes[0] === 0x50 && bytes[1] === 0x4B) return ext === 'xlsb' ? 'xlsb' : 'xlsx';  // PK — ZIP
+    if (bytes[0] === 0xD0 && bytes[1] === 0xCF) return 'xls';                              // OLE2
+    return ext || 'unknown';
+}
+
+/** Нормализация пути из rels: "../drawings/x.xml" относительно "xl/worksheets/" → "xl/drawings/x.xml" */
+function resolvePath(base, target) {
+    if (target.startsWith('/')) return target.slice(1);
+    const parts = base.split('/').filter(Boolean);
+    target.split('/').forEach(p => {
+        if (p === '..') parts.pop();
+        else if (p !== '.') parts.push(p);
+    });
+    return parts.join('/');
+}
+
+/** Разбор одного листа. Индексный проход, а не регулярка: на 500 тыс. ячеек это принципиально. */
+function scanSheetXml(xml, sheet) {
+    const dimM = /<dimension\s+ref="([^"]+)"/.exec(xml);
+    let maxR = 0, maxC = 0;
+    if (dimM) {
+        const end = dimM[1].split(':').pop();
+        const p = parseCellRef(end.replace(/\$/g, ''));
+        if (p) { maxR = p.r + 1; maxC = p.c + 1; }
+        sheet.dimension = dimM[1];
+    }
+
+    sheet.merged     = (xml.match(/<mergeCell\s/g)  || []).length;
+    sheet.dataValid  = (xml.match(/<dataValidation[\s>]/g) || []).length;
+    sheet.condFmt    = (xml.match(/<conditionalFormatting[\s>]/g) || []).length;
+    sheet.protected  = xml.indexOf('<sheetProtection') !== -1;
+    sheet.autoFilter = xml.indexOf('<autoFilter') !== -1;
+
+    // Тепловая карта: сетка не больше HEAT_MAX×HEAT_MAX, куда «сплющивается» лист
+    const hw = Math.max(1, Math.min(maxC || 1, HEAT_MAX));
+    const hh = Math.max(1, Math.min(maxR || 1, HEAT_MAX));
+    const heat = new Uint8Array(hw * hh);
+    const putHeat = (r, c, v) => {
+        if (!maxR || !maxC) return;
+        const y = Math.min(hh - 1, Math.floor(r / maxR * hh));
+        const x = Math.min(hw - 1, Math.floor(c / maxC * hw));
+        const k = y * hw + x;
+        if (v > heat[k]) heat[k] = v;    // приоритет: ошибка > формула > число > текст
+    };
+
+    if (xml.length > MAX_SHEET_SCAN) {
+        sheet.truncated = true;
+        sheet.formulaCount = (xml.match(/<f[\s>\/]/g) || []).length;
+        sheet.heat = { w: hw, h: hh, data: heat };
+        return;
+    }
+
+    const shared = new Map();            // si → текст общей формулы
+    let i = 0, formulas = 0, consts = 0, texts = 0, errors = 0, cells = 0;
+    const errKinds = new Map();
+    const colStats = new Map();
+    const refsOut  = new Map();          // имя листа → сколько ссылок
+    const tableRefs = new Map();
+    const nameRefs  = new Map();
+    const extRefs   = new Map();
+    const funcs     = new Map();
+    const invisible = [];                // ячейки с INDIRECT/OFFSET
+    const wholeCol  = [];
+    const errorCells = [];
+    const longest   = [];                // топ самых длинных формул
+
+    while ((i = xml.indexOf('<c ', i)) !== -1) {
+        const gt = xml.indexOf('>', i);
+        if (gt === -1) break;
+        const selfClose = xml[gt - 1] === '/';
+        const attrs = xml.slice(i + 3, selfClose ? gt - 1 : gt);
+        let inner = '';
+        if (selfClose) { i = gt + 1; }
+        else {
+            const end = xml.indexOf('</c>', gt);
+            if (end === -1) break;
+            inner = xml.slice(gt + 1, end);
+            i = end + 4;
+        }
+
+        const rm = /r="([A-Z]+\d+)"/.exec(attrs);
+        const pos = rm ? parseCellRef(rm[1]) : null;
+        const tm = /t="([a-z]+)"/.exec(attrs);
+        const type = tm ? tm[1] : 'n';
+        cells++;
+
+        // ── формула
+        let fText = null;
+        const fi = inner.indexOf('<f');
+        if (fi !== -1) {
+            const fgt = inner.indexOf('>', fi);
+            const fAttrs = inner.slice(fi + 2, fgt);
+            if (inner[fgt - 1] === '/') {
+                const si = /si="(\d+)"/.exec(fAttrs);              // продолжение общей формулы
+                if (si) fText = shared.get(si[1]) || '';
+            } else {
+                const fend = inner.indexOf('</f>', fgt);
+                fText = unesc(inner.slice(fgt + 1, fend === -1 ? undefined : fend));
+                const si = /si="(\d+)"/.exec(fAttrs);
+                if (si && /t="shared"/.test(fAttrs)) shared.set(si[1], fText);
+                if (/t="array"/.test(fAttrs)) sheet.hasArray = true;
+            }
+        }
+
+        let kind = 0;                                             // 0 пусто 1 текст 2 число 3 формула 4 ошибка
+        if (fText != null) {
+            formulas++;
+            kind = 3;
+            const s = scanFormula(fText);
+            s.sheets.forEach(sh => refsOut.set(sh, (refsOut.get(sh) || 0) + 1));
+            s.tables.forEach(t => tableRefs.set(t, (tableRefs.get(t) || 0) + 1));
+            s.names.forEach(nm => nameRefs.set(nm, (nameRefs.get(nm) || 0) + 1));
+            s.ext.forEach(e => extRefs.set(e, (extRefs.get(e) || 0) + 1));
+            s.funcs.forEach((c, fn) => funcs.set(fn, (funcs.get(fn) || 0) + c));
+            if (s.flags.invisible && invisible.length < 60 && rm) invisible.push({ cell: rm[1], f: fText });
+            if (s.flags.wholeCol && wholeCol.length < 60 && rm) wholeCol.push({ cell: rm[1], f: fText });
+            if (s.flags.error) { kind = 4; }
+            if (fText.length > 120) {
+                longest.push({ cell: rm ? rm[1] : '?', len: fText.length, f: fText });
+                if (longest.length > 400) { longest.sort((a, b) => b.len - a.len); longest.length = 60; }
+            }
+        }
+
+        // ── значение
+        const vi = inner.indexOf('<v>');
+        if (type === 'e') {
+            const v = vi !== -1 ? unesc(inner.slice(vi + 3, inner.indexOf('</v>', vi))) : '#ERR';
+            errors++; kind = 4;
+            errKinds.set(v, (errKinds.get(v) || 0) + 1);
+            if (errorCells.length < 200 && rm) errorCells.push({ cell: rm[1], err: v, f: fText });
+        } else if (fText == null && vi !== -1) {
+            if (type === 's' || type === 'str' || type === 'inlineStr') { texts++; kind = 1; }
+            else { consts++; kind = 2; }
+        } else if (fText == null && inner.indexOf('<is>') !== -1) { texts++; kind = 1; }
+
+        if (pos) {
+            putHeat(pos.r, pos.c, kind);
+            // Колоночная статистика — для правила «разрыв в формульной колонке»
+            if (kind >= 2) {
+                let cs = colStats.get(pos.c);
+                if (!cs) { cs = { f: 0, k: 0, minF: Infinity, maxF: -1, constRows: [] }; colStats.set(pos.c, cs); }
+                if (kind === 3 || kind === 4) {
+                    cs.f++;
+                    if (pos.r < cs.minF) cs.minF = pos.r;
+                    if (pos.r > cs.maxF) cs.maxF = pos.r;
+                } else if (kind === 2) {
+                    cs.k++;
+                    if (cs.constRows.length < 14) cs.constRows.push(pos.r);
+                }
+            }
+        }
+    }
+
+    longest.sort((a, b) => b.len - a.len);
+    Object.assign(sheet, {
+        cellCount: cells, formulaCount: formulas, constCount: consts, textCount: texts,
+        errorCount: errors, errKinds, colStats, refsOut, tableRefs, nameRefs, extRefs, funcs,
+        invisible, wholeCol, errorCells, longest: longest.slice(0, 20),
+        rows: maxR, cols: maxC, heat: { w: hw, h: hh, data: heat },
+    });
+}
+
+/** Разбор книги формата OOXML (xlsx/xlsm/xltx, частично xlsb). */
+async function parseOOXML(bytes, book, log) {
+    let zip;
+    try {
+        zip = fflate.unzipSync(bytes);
+    } catch (e) {
+        throw new Error('Не удалось распаковать файл — возможно, он повреждён или защищён паролем.');
+    }
+    const has = p => Object.prototype.hasOwnProperty.call(zip, p);
+    const txt = p => has(p) ? dec.decode(zip[p]) : null;
+
+    book.zipEntries = Object.keys(zip).length;
+    book.vba = has('xl/vbaProject.bin');
+    book.modelRaw = Object.keys(zip).find(k => /^xl\/model\/item\d*\.data$/.test(k)) || null;
+    book.modelSize = book.modelRaw ? zip[book.modelRaw].length : 0;
+
+    /* ── свойства документа (кто автор — это ещё и вопрос приватности) */
+    const core = txt('docProps/core.xml');
+    if (core) {
+        const d = xmlDoc(core);
+        const g = t => { const e = els(d, t)[0]; return e ? e.textContent : null; };
+        book.props = {
+            title: g('title'), creator: g('creator'), lastModifiedBy: g('lastModifiedBy'),
+            created: g('created'), modified: g('modified'),
+        };
+    }
+    const appx = txt('docProps/app.xml');
+    if (appx) {
+        const d = xmlDoc(appx);
+        const g = t => { const e = els(d, t)[0]; return e ? e.textContent : null; };
+        book.props = Object.assign(book.props || {}, { app: g('Application'), company: g('Company'), appVersion: g('AppVersion') });
+    }
+
+    /* ── customXml → DataMashup: исходный M-код всех запросов Power Query */
+    for (const path of Object.keys(zip)) {
+        if (!/^customXml\/item\d*\.xml$/i.test(path)) continue;
+        const s = dec.decode(zip[path]);
+        const m = /<DataMashup[^>]*>([\s\S]*?)<\/DataMashup>/.exec(s);
+        if (!m) continue;
+        try {
+            book.queries = parseDataMashup(m[1].replace(/\s+/g, ''));
+            log('ok', 'Power Query: найдено запросов — ' + book.queries.length);
+        } catch (e) {
+            log('warn', 'Power Query: контейнер найден, но распаковать не удалось (' + e.message + ')');
+        }
+        break;
+    }
+
+    if (book.format === 'xlsb') {
+        // В xlsb workbook/листы/таблицы — двоичный BIFF12. Их берёт SheetJS (см. buildFromSheetJS).
+        // Здесь мы уже забрали то, что и в xlsb остаётся XML: docProps, DataMashup, наличие модели.
+        return zip;
+    }
+
+    /* ── workbook.xml: листы, имена, внешние ссылки, режим вычислений */
+    const wbXml = txt('xl/workbook.xml');
+    if (!wbXml) throw new Error('Это не похоже на книгу Excel: внутри нет xl/workbook.xml.');
+    const wbDoc = xmlDoc(wbXml);
+
+    const calcPr = els(wbDoc, 'calcPr')[0];
+    book.calc = {
+        mode:    calcPr ? (calcPr.getAttribute('calcMode') || 'auto') : 'auto',
+        iterate: calcPr ? calcPr.getAttribute('iterate') === '1' : false,
+        fullOnLoad: calcPr ? calcPr.getAttribute('fullCalcOnLoad') === '1' : false,
+    };
+    book.protectedWorkbook = els(wbDoc, 'workbookProtection').length > 0;
+
+    // rels книги: r:id → путь к части
+    const relMap = new Map();
+    const wbRels = txt('xl/_rels/workbook.xml.rels');
+    if (wbRels) els(xmlDoc(wbRels), 'Relationship').forEach(r => {
+        relMap.set(r.getAttribute('Id'), resolvePath('xl/', r.getAttribute('Target')));
+    });
+
+    book.sheets = els(wbDoc, 'sheet').map((s, idx) => ({
+        idx,
+        name:  s.getAttribute('name'),
+        state: s.getAttribute('state') || 'visible',
+        path:  relMap.get(relId(s)) || null,
+        tables: [], queries: [], pivots: [],
+    }));
+
+    book.names = els(wbDoc, 'definedName').map(d => {
+        const ref = d.textContent || '';
+        return {
+            name: d.getAttribute('name'),
+            scope: d.getAttribute('localSheetId') != null
+                ? (book.sheets[+d.getAttribute('localSheetId')] || {}).name || '?'
+                : 'Книга',
+            ref,
+            hidden: d.getAttribute('hidden') === '1',
+            broken: ref.indexOf('#REF!') !== -1,
+            builtin: /^_xlfn|^_xlnm/.test(d.getAttribute('name') || ''),
+            uses: 0,
+        };
+    });
+
+    /* ── внешние ссылки на другие книги */
+    book.externalLinks = [];
+    const extRefEls = els(wbDoc, 'externalReference');
+    extRefEls.forEach((er, n) => {
+        const p = relMap.get(relId(er));
+        let target = null;
+        if (p) {
+            const erRels = txt(p.replace(/([^/]+)$/, '_rels/$1.rels'));
+            if (erRels) {
+                const rel = els(xmlDoc(erRels), 'Relationship')[0];
+                if (rel) target = decodeURIComponent(rel.getAttribute('Target') || '');
+            }
+        }
+        book.externalLinks.push({
+            index: '[' + (n + 1) + ']',
+            path: target || '(путь не сохранён в файле)',
+            local: !!target && /^(file:\/\/\/)?[A-Za-z]:[\\/]/.test(target.replace(/^file:\/\/\//, '')),
+            uses: 0, usedBy: [],
+        });
+    });
+
+    /* ── листы: самая долгая часть, поэтому с прогрессом */
+    for (let k = 0; k < book.sheets.length; k++) {
+        const sh = book.sheets[k];
+        const xml = sh.path ? txt(sh.path) : null;
+        if (!xml) { Object.assign(sh, { cellCount: 0, formulaCount: 0, constCount: 0, textCount: 0, errorCount: 0 }); continue; }
+        scanSheetXml(xml, sh);
+
+        // rels листа → какие таблицы и запросы на нём лежат
+        if (sh.path) {
+            const rp = sh.path.replace(/([^/]+)$/, '_rels/$1.rels');
+            const rx = txt(rp);
+            if (rx) {
+                sh.rels = els(xmlDoc(rx), 'Relationship').map(r => ({
+                    type: (r.getAttribute('Type') || '').split('/').pop(),
+                    target: resolvePath(sh.path.replace(/[^/]+$/, ''), r.getAttribute('Target')),
+                }));
+            }
+        }
+        log('ok', 'Лист «' + sh.name + '»: формул ' + fmtNum(sh.formulaCount) + ', ошибок ' + fmtNum(sh.errorCount));
+        await nextFrame();
+    }
+
+    /* ── умные таблицы */
+    book.tables = [];
+    for (const path of Object.keys(zip)) {
+        if (!/^xl\/tables\/table\d+\.xml$/.test(path)) continue;
+        const d = xmlDoc(dec.decode(zip[path]));
+        const t = els(d, 'table')[0];
+        if (!t) continue;
+        const owner = book.sheets.find(s => (s.rels || []).some(r => r.target === path));
+        book.tables.push({
+            id: t.getAttribute('id'),
+            name: t.getAttribute('displayName') || t.getAttribute('name'),
+            ref: t.getAttribute('ref'),
+            tableType: t.getAttribute('tableType') || 'worksheet',   // queryTable = кормится из PQ
+            sheet: owner ? owner.name : null,
+            columns: els(d, 'tableColumn').map(c => c.getAttribute('name')),
+            path,
+        });
+        if (owner) owner.tables.push(t.getAttribute('displayName') || t.getAttribute('name'));
+    }
+
+    /* ── подключения (в т.ч. Mashup = Power Query) */
+    book.connections = [];
+    const connXml = txt('xl/connections.xml');
+    if (connXml) {
+        els(xmlDoc(connXml), 'connection').forEach(c => {
+            const db = els(c, 'dbPr')[0];
+            const olap = els(c, 'olapPr')[0];
+            const cs = db ? (db.getAttribute('connection') || '') : '';
+            book.connections.push({
+                id: c.getAttribute('id'),
+                name: c.getAttribute('name'),
+                description: c.getAttribute('description') || '',
+                command: db ? (db.getAttribute('command') || '') : '',
+                connStr: cs,
+                isMashup: /Microsoft\.Mashup/i.test(cs),
+                isModel: !!olap || /MSOLAP/i.test(cs) || (db && db.getAttribute('command') === 'Model'),
+                onlyConnection: c.getAttribute('onlyUseConnectionFile') === '1',
+                refreshOnLoad: c.getAttribute('refreshOnLoad') === '1',
+            });
+        });
+    }
+
+    /* ── queryTables: куда именно запрос приземляется на листе */
+    book.queryTables = [];
+    for (const path of Object.keys(zip)) {
+        if (!/^xl\/queryTables\/queryTable\d+\.xml$/.test(path)) continue;
+        const qt = els(xmlDoc(dec.decode(zip[path])), 'queryTable')[0];
+        if (!qt) continue;
+        const owner = book.sheets.find(s => (s.rels || []).some(r => r.target === path));
+        book.queryTables.push({ name: qt.getAttribute('name'), connectionId: qt.getAttribute('connectionId'), sheet: owner ? owner.name : null, path });
+    }
+
+    /* ── сводные таблицы и их кеши (единственный доступный вид на модель данных) */
+    book.pivots = [];
+    book.pivotCaches = [];
+    for (const path of Object.keys(zip)) {
+        if (/^xl\/pivotCache\/pivotCacheDefinition\d+\.xml$/.test(path)) {
+            const d = xmlDoc(dec.decode(zip[path]));
+            const src = els(d, 'cacheSource')[0];
+            const ws  = src ? els(src, 'worksheetSource')[0] : null;
+            const hierarchies = els(d, 'cacheHierarchy').map(h => ({
+                uniqueName: h.getAttribute('uniqueName') || '',
+                caption: h.getAttribute('caption') || '',
+                measure: h.getAttribute('measure') === '1',
+                dimension: h.getAttribute('dimensionUniqueName') || '',
+            }));
+            book.pivotCaches.push({
+                path,
+                sourceType: src ? src.getAttribute('type') : null,
+                connectionId: src ? src.getAttribute('connectionId') : null,
+                sheet: ws ? ws.getAttribute('sheet') : null,
+                ref: ws ? (ws.getAttribute('ref') || ws.getAttribute('name')) : null,
+                fields: els(d, 'cacheField').map(f => f.getAttribute('name')),
+                hierarchies,
+            });
+        }
+        if (/^xl\/pivotTables\/pivotTable\d+\.xml$/.test(path)) {
+            const pt = els(xmlDoc(dec.decode(zip[path])), 'pivotTableDefinition')[0];
+            if (!pt) continue;
+            const owner = book.sheets.find(s => (s.rels || []).some(r => r.target === path));
+            book.pivots.push({
+                name: pt.getAttribute('name'),
+                cacheId: pt.getAttribute('cacheId'),
+                sheet: owner ? owner.name : null,
+                location: (els(pt, 'location')[0] || {}).getAttribute ? els(pt, 'location')[0].getAttribute('ref') : null,
+            });
+            if (owner) owner.pivots.push(pt.getAttribute('name'));
+        }
+    }
+
+    return zip;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   POWER QUERY
+   Весь M-код книги лежит в customXml как base64-контейнер DataMashup:
+       [int32 версия][int32 длина][ZIP с Formulas/Section1.m][права][метаданные]
+   Внутри ZIP — обычный текстовый Section1.m. Достаём его целиком.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+}
+
+function parseDataMashup(b64) {
+    const bytes = b64ToBytes(b64);
+    if (bytes.length < 8) throw new Error('контейнер пуст');
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const zipLen = dv.getUint32(4, true);                       // little-endian
+    if (zipLen <= 0 || 8 + zipLen > bytes.length) throw new Error('неожиданная длина пакета');
+    const zip = fflate.unzipSync(bytes.subarray(8, 8 + zipLen));
+    const key = Object.keys(zip).find(k => /Formulas\/Section1\.m$/i.test(k));
+    if (!key) throw new Error('Section1.m не найден');
+    let m = dec.decode(zip[key]);
+    if (m.charCodeAt(0) === 0xFEFF) m = m.slice(1);             // BOM
+    return parseSectionM(m);
+}
+
+/** Символ, допустимый внутри идентификатора M (включая юникодные имена). */
+const RE_ID_CHAR = new RegExp('[' + ID_CHAR + ']');
+const isIdChar = ch => !!ch && RE_ID_CHAR.test(ch);
+
+/** Пропуск строкового литерала M (кавычка удваивается). i указывает на открывающую кавычку. */
+function mSkipString(s, i) {
+    i++;
+    while (i < s.length) {
+        if (s[i] === '"') { if (s[i + 1] === '"') { i += 2; continue; } return i + 1; }
+        i++;
+    }
+    return i;
+}
+
+/** Разбиение по разделителю на нулевой глубине, с уважением к строкам и комментариям. */
+function mSplit(s, sep) {
+    const out = [];
+    let depth = 0, start = 0, i = 0;
+    while (i < s.length) {
+        const ch = s[i];
+        if (ch === '"') { i = mSkipString(s, i); continue; }
+        if (ch === '#' && s[i + 1] === '"') { i = mSkipString(s, i + 1); continue; }
+        if (ch === '/' && s[i + 1] === '/') { const nl = s.indexOf('\n', i); i = nl === -1 ? s.length : nl + 1; continue; }
+        if (ch === '/' && s[i + 1] === '*') { const e = s.indexOf('*/', i); i = e === -1 ? s.length : e + 2; continue; }
+        if (ch === '(' || ch === '[' || ch === '{') depth++;
+        else if (ch === ')' || ch === ']' || ch === '}') depth--;
+        else if (ch === sep && depth === 0) { out.push(s.slice(start, i)); start = i + 1; }
+        i++;
+    }
+    out.push(s.slice(start));
+    return out;
+}
+
+/** Позиция ключевого слова `in`, парного стартовому `let`, на нулевой глубине. */
+function mFindIn(s) {
+    let depth = 0, i = 0;
+    while (i < s.length) {
+        const ch = s[i];
+        if (ch === '"') { i = mSkipString(s, i); continue; }
+        if (ch === '#' && s[i + 1] === '"') { i = mSkipString(s, i + 1); continue; }
+        if (ch === '/' && s[i + 1] === '/') { const nl = s.indexOf('\n', i); i = nl === -1 ? s.length : nl + 1; continue; }
+        if (ch === '/' && s[i + 1] === '*') { const e = s.indexOf('*/', i); i = e === -1 ? s.length : e + 2; continue; }
+        if (ch === '(' || ch === '[' || ch === '{') depth++;
+        else if (ch === ')' || ch === ']' || ch === '}') depth--;
+        else if (depth === 0 && (ch === 'l' || ch === 'i')) {
+            if (s.startsWith('let', i) && !isIdChar(s[i + 3]) && !isIdChar(s[i - 1])) depth++;   // вложенный let
+            else if (s.startsWith('in', i) && !isIdChar(s[i + 2]) && !isIdChar(s[i - 1])) {
+                if (depth === 0) return i;
+                depth--;
+            }
+        }
+        i++;
+    }
+    return -1;
+}
+
+/** Коннекторы M → человекочитаемый вид источника. Порядок важен: сначала более узкие. */
+const M_SOURCES = [
+    { re: /Excel\.CurrentWorkbook\s*\(\s*\)\s*\{\s*\[\s*Name\s*=\s*"([^"]+)"/g, kind: 'workbook-table', label: 'Таблица этой книги' },
+    { re: /Excel\.Workbook\s*\(\s*File\.Contents\s*\(\s*"([^"]+)"/g,            kind: 'file',   label: 'Книга Excel' },
+    { re: /Csv\.Document\s*\(\s*File\.Contents\s*\(\s*"([^"]+)"/g,              kind: 'file',   label: 'CSV-файл' },
+    { re: /Json\.Document\s*\(\s*File\.Contents\s*\(\s*"([^"]+)"/g,             kind: 'file',   label: 'JSON-файл' },
+    { re: /Folder\.Files\s*\(\s*"([^"]+)"/g,                                    kind: 'folder', label: 'Папка' },
+    { re: /Folder\.Contents\s*\(\s*"([^"]+)"/g,                                 kind: 'folder', label: 'Папка' },
+    { re: /File\.Contents\s*\(\s*"([^"]+)"/g,                                   kind: 'file',   label: 'Файл' },
+    { re: /Sql\.Databases?\s*\(\s*"([^"]+)"\s*(?:,\s*"([^"]+)")?/g,             kind: 'db',     label: 'SQL Server' },
+    { re: /PostgreSQL\.Database\s*\(\s*"([^"]+)"\s*,\s*"([^"]+)"/g,             kind: 'db',     label: 'PostgreSQL' },
+    { re: /MySQL\.Database\s*\(\s*"([^"]+)"\s*,\s*"([^"]+)"/g,                  kind: 'db',     label: 'MySQL' },
+    { re: /Oracle\.Database\s*\(\s*"([^"]+)"/g,                                 kind: 'db',     label: 'Oracle' },
+    { re: /Access\.Database\s*\(\s*File\.Contents\s*\(\s*"([^"]+)"/g,           kind: 'db',     label: 'Access' },
+    { re: /Odbc\.(?:DataSource|Query)\s*\(\s*"([^"]+)"/g,                       kind: 'db',     label: 'ODBC' },
+    { re: /OleDb\.DataSource\s*\(\s*"([^"]+)"/g,                                kind: 'db',     label: 'OLE DB' },
+    { re: /SharePoint\.(?:Tables|Files|Contents)\s*\(\s*"([^"]+)"/g,            kind: 'web',    label: 'SharePoint' },
+    { re: /OData\.Feed\s*\(\s*"([^"]+)"/g,                                      kind: 'web',    label: 'OData' },
+    { re: /Web\.(?:Contents|BrowserContents|Page)\s*\(\s*"([^"]+)"/g,           kind: 'web',    label: 'Web' },
+    { re: /AnalysisServices\.Databases?\s*\(\s*"([^"]+)"/g,                      kind: 'db',    label: 'Analysis Services' },
+];
+
+function detectMSources(code) {
+    const found = [];
+    M_SOURCES.forEach(src => {
+        src.re.lastIndex = 0;
+        let m;
+        while ((m = src.re.exec(code)) !== null) {
+            const detail = [m[1], m[2]].filter(Boolean).join(' / ');
+            if (!found.some(f => f.kind === src.kind && f.detail === detail)) {
+                found.push({ kind: src.kind, label: src.label, detail });
+            }
+        }
+    });
+    return found;
+}
+
+/** Убирает ведущие пробелы и комментарии перед объявлением шага, возвращая обе части. */
+function mSplitTrivia(s) {
+    let i = 0;
+    for (;;) {
+        while (i < s.length && /\s/.test(s[i])) i++;
+        if (s[i] === '/' && s[i + 1] === '/') { const nl = s.indexOf('\n', i); i = nl === -1 ? s.length : nl + 1; continue; }
+        if (s[i] === '/' && s[i + 1] === '*') { const e = s.indexOf('*/', i); i = e === -1 ? s.length : e + 2; continue; }
+        break;
+    }
+    return { comment: s.slice(0, i).replace(/^[\s\/*]+|[\s*\/]+$/g, '').trim(), body: s.slice(i) };
+}
+
+/** Разбор Section1.m в список запросов. */
+function parseSectionM(m) {
+    const queries = [];
+    const statements = mSplit(m, ';');
+
+    statements.forEach(raw => {
+        let s = raw.trim();
+        if (!s || /^section\b/.test(s)) return;
+        // необязательный блок метаданных перед объявлением: [Description="…"] shared X = …
+        if (s[0] === '[') { const e = skipBrackets(s, 0); s = s.slice(e).trim(); }
+        let isShared = false;
+        if (/^shared\b/.test(s)) { isShared = true; s = s.slice(6).trim(); }
+
+        let name = null, rest = null;
+        if (s.startsWith('#"')) {
+            const end = mSkipString(s, 1);
+            name = s.slice(2, end - 1);
+            rest = s.slice(end);
+        } else {
+            const mm = RE_M_NAME.exec(s);
+            if (!mm) return;
+            name = mm[1];
+            rest = s.slice(mm[1].length);
+        }
+        rest = rest.trim();
+        if (rest[0] !== '=') return;
+        const body = rest.slice(1).trim();
+        if (!name) return;
+
+        /* шаги: let A = …, B = … in Result */
+        const steps = [];
+        let result = null;
+        if (/^let\b/.test(body)) {
+            const inner = body.slice(3);
+            const inPos = mFindIn(inner);
+            if (inPos !== -1) {
+                result = inner.slice(inPos + 2).trim();
+                mSplit(inner.slice(0, inPos), ',').forEach(part => {
+                    const trivia = mSplitTrivia(part);
+                    const p = trivia.body.trim();
+                    if (!p) return;
+                    let stName, stExpr;
+                    if (p.startsWith('#"')) {
+                        const e = mSkipString(p, 1);
+                        stName = p.slice(2, e - 1);
+                        stExpr = p.slice(e).replace(/^\s*=\s*/, '');
+                    } else {
+                        const eq = p.indexOf('=');
+                        if (eq === -1) return;
+                        stName = p.slice(0, eq).trim();
+                        stExpr = p.slice(eq + 1).trim();
+                    }
+                    steps.push({ name: stName, expr: stExpr, comment: trivia.comment, sources: detectMSources(stExpr) });
+                });
+            }
+        }
+
+        queries.push({
+            name, shared: isShared, code: raw.trim(),
+            steps, result,
+            sources: detectMSources(body),
+            refs: [],           // заполняется ниже: ссылки на другие запросы
+            loadedTo: [],       // куда приземляется (таблица / только подключение)
+            isFunction: /^\s*\(/.test(body),
+        });
+    });
+
+    /* связи запрос → запрос: имя одного встречается в теле другого */
+    queries.forEach(q => {
+        queries.forEach(other => {
+            if (other === q) return;
+            const quoted = '#"' + other.name + '"';
+            let hit = q.code.indexOf(quoted) !== -1;
+            if (!hit && RE_M_PLAIN.test(other.name)) {
+                hit = new RegExp('(^|[^' + ID_CHAR + '#"])' + escapeRe(other.name) + '($|[^' + ID_CHAR + '"])').test(q.code);
+            }
+            if (hit) q.refs.push(other.name);
+        });
+    });
+
+    return queries;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SheetJS — только для .xls и .xlsb (двоичные форматы).
+   Грузится лениво: 880 КБ не должны платить те, кто открывает обычный .xlsx.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+let sheetJSPromise = null;
+function ensureSheetJS() {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    if (sheetJSPromise) return sheetJSPromise;
+    sheetJSPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+        s.integrity = 'sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw';
+        s.crossOrigin = 'anonymous';
+        s.onload  = () => resolve(window.XLSX);
+        s.onerror = () => reject(new Error('не удалось загрузить SheetJS (нужна сеть)'));
+        document.head.appendChild(s);
+    });
+    return sheetJSPromise;
+}
+
+/** Заполнение книги из объекта SheetJS — путь для .xls и .xlsb. */
+function buildFromSheetJS(wb, book) {
+    const wbInfo = wb.Workbook || {};
+    book.sheets = wb.SheetNames.map((name, idx) => {
+        const meta = (wbInfo.Sheets || [])[idx] || {};
+        const sh = {
+            idx, name,
+            state: meta.Hidden === 2 ? 'veryHidden' : meta.Hidden === 1 ? 'hidden' : 'visible',
+            tables: [], queries: [], pivots: [],
+            cellCount: 0, formulaCount: 0, constCount: 0, textCount: 0, errorCount: 0,
+            errKinds: new Map(), colStats: new Map(), refsOut: new Map(), tableRefs: new Map(),
+            nameRefs: new Map(), extRefs: new Map(), funcs: new Map(),
+            invisible: [], wholeCol: [], errorCells: [], longest: [],
+        };
+        const ws = wb.Sheets[name];
+        if (!ws) { sh.heat = { w: 1, h: 1, data: new Uint8Array(1) }; return sh; }
+
+        const range = ws['!ref'] ? window.XLSX.utils.decode_range(ws['!ref']) : null;
+        sh.dimension = ws['!ref'] || null;
+        sh.rows = range ? range.e.r + 1 : 0;
+        sh.cols = range ? range.e.c + 1 : 0;
+        sh.merged = (ws['!merges'] || []).length;
+        sh.protected = !!ws['!protect'];
+
+        const hw = Math.max(1, Math.min(sh.cols || 1, HEAT_MAX));
+        const hh = Math.max(1, Math.min(sh.rows || 1, HEAT_MAX));
+        const heat = new Uint8Array(hw * hh);
+        const longest = [];
+
+        Object.keys(ws).forEach(addr => {
+            if (addr[0] === '!') return;
+            const pos = parseCellRef(addr);
+            if (!pos) return;
+            const cell = ws[addr];
+            sh.cellCount++;
+            let kind = 0;
+
+            if (cell.f) {
+                sh.formulaCount++; kind = 3;
+                const s = scanFormula(cell.f);
+                s.sheets.forEach(x => sh.refsOut.set(x, (sh.refsOut.get(x) || 0) + 1));
+                s.tables.forEach(x => sh.tableRefs.set(x, (sh.tableRefs.get(x) || 0) + 1));
+                s.names.forEach(x => sh.nameRefs.set(x, (sh.nameRefs.get(x) || 0) + 1));
+                s.ext.forEach(x => sh.extRefs.set(x, (sh.extRefs.get(x) || 0) + 1));
+                s.funcs.forEach((c, fn) => sh.funcs.set(fn, (sh.funcs.get(fn) || 0) + c));
+                if (s.flags.invisible && sh.invisible.length < 60) sh.invisible.push({ cell: addr, f: cell.f });
+                if (s.flags.wholeCol && sh.wholeCol.length < 60) sh.wholeCol.push({ cell: addr, f: cell.f });
+                if (cell.f.length > 120) longest.push({ cell: addr, len: cell.f.length, f: cell.f });
+            }
+            if (cell.t === 'e') {
+                sh.errorCount++; kind = 4;
+                const ev = window.XLSX.SSF && cell.w ? cell.w : String(cell.v);
+                sh.errKinds.set(ev, (sh.errKinds.get(ev) || 0) + 1);
+                if (sh.errorCells.length < 200) sh.errorCells.push({ cell: addr, err: ev, f: cell.f });
+            } else if (!cell.f) {
+                if (cell.t === 's' || cell.t === 'str') { sh.textCount++; kind = 1; }
+                else if (cell.t === 'n' || cell.t === 'b' || cell.t === 'd') { sh.constCount++; kind = 2; }
+            }
+
+            if (sh.rows && sh.cols) {
+                const y = Math.min(hh - 1, Math.floor(pos.r / sh.rows * hh));
+                const x = Math.min(hw - 1, Math.floor(pos.c / sh.cols * hw));
+                if (kind > heat[y * hw + x]) heat[y * hw + x] = kind;
+            }
+            if (kind >= 2) {
+                let cs = sh.colStats.get(pos.c);
+                if (!cs) { cs = { f: 0, k: 0, minF: Infinity, maxF: -1, constRows: [] }; sh.colStats.set(pos.c, cs); }
+                if (kind >= 3) { cs.f++; if (pos.r < cs.minF) cs.minF = pos.r; if (pos.r > cs.maxF) cs.maxF = pos.r; }
+                else { cs.k++; if (cs.constRows.length < 14) cs.constRows.push(pos.r); }
+            }
+        });
+
+        longest.sort((a, b) => b.len - a.len);
+        sh.longest = longest.slice(0, 20);
+        sh.heat = { w: hw, h: hh, data: heat };
+        return sh;
+    });
+
+    book.names = (wbInfo.Names || []).map(n => ({
+        name: n.Name,
+        scope: n.Sheet == null ? 'Книга' : (wb.SheetNames[n.Sheet] || '?'),
+        ref: n.Ref || '',
+        hidden: false,
+        broken: String(n.Ref || '').indexOf('#REF!') !== -1,
+        builtin: /^_xl/.test(n.Name || ''),
+        uses: 0,
+    }));
+    book.tables = book.tables || [];
+    book.connections = book.connections || [];
+    book.queryTables = book.queryTables || [];
+    book.pivots = book.pivots || [];
+    book.pivotCaches = book.pivotCaches || [];
+    book.externalLinks = book.externalLinks || [];
+    book.calc = book.calc || { mode: 'auto', iterate: false };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ГРАФ
+   Единая модель, из которой рисуются ВСЕ вкладки. Направление рёбер = поток
+   данных: источник → запрос → таблица → лист → сводная. Именно поэтому на
+   раскладке «Потоком →» сразу читается, откуда что берётся.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const NODE_TYPES = {
+    book:    { label: 'Книга',              color: '#0f172a', shape: 'round-rectangle' },
+    source:  { label: 'Внешний источник',   color: '#0d9488', shape: 'barrel' },
+    extbook: { label: 'Внешняя книга',      color: '#64748b', shape: 'cut-rectangle' },
+    query:   { label: 'Запрос Power Query', color: '#7c3aed', shape: 'round-rectangle' },
+    table:   { label: 'Умная таблица',      color: '#059669', shape: 'rectangle' },
+    sheet:   { label: 'Лист',               color: '#2563eb', shape: 'round-rectangle' },
+    name:    { label: 'Именованный диапазон', color: '#d97706', shape: 'tag' },
+    pivot:   { label: 'Сводная таблица',    color: '#db2777', shape: 'diamond' },
+    measure: { label: 'Мера модели',        color: '#4f46e5', shape: 'hexagon' },
+};
+
+const EDGE_TYPES = {
+    ref:       { label: 'ссылка формулы',   style: 'solid'  },
+    contains:  { label: 'лежит на листе',   style: 'solid'  },
+    load:      { label: 'загружается в',    style: 'dashed' },
+    feed:      { label: 'питает запрос',    style: 'dashed' },
+    src:       { label: 'источник',         style: 'dashed' },
+    ext:       { label: 'внешняя ссылка',   style: 'dashed' },
+    pivot:     { label: 'источник сводной', style: 'dashed' },
+    invisible: { label: 'невидимая связь',  style: 'invisible' },
+};
+
+function buildGraph(books) {
+    const nodes = [];
+    const edges = [];
+    const nodeIdx = new Map();
+    const multi = books.length > 1;
+
+    const addNode = (id, type, label, data) => {
+        if (nodeIdx.has(id)) return nodeIdx.get(id);
+        const n = Object.assign({ id, type, label, issues: 0 }, data || {});
+        nodes.push(n); nodeIdx.set(id, n);
+        return n;
+    };
+    const addEdge = (from, to, type, count, meta) => {
+        if (!nodeIdx.has(from) || !nodeIdx.has(to) || from === to) return;
+        const id = type + '|' + from + '|' + to;
+        let e = edges.find(x => x.id === id);
+        if (e) { e.count += (count || 1); return e; }
+        e = Object.assign({ id, source: from, target: to, type, count: count || 1 }, meta || {});
+        edges.push(e);
+        return e;
+    };
+
+    books.forEach((book, bi) => {
+        const P = multi ? 'bk:' + bi : null;
+        if (P) addNode(P, 'book', book.fileName, { isParent: true });
+
+        const sid = n => 's:' + bi + ':' + n;
+        const tid = n => 't:' + bi + ':' + n;
+        const qid = n => 'q:' + bi + ':' + n;
+        const nid = n => 'n:' + bi + ':' + n;
+        const pid = n => 'p:' + bi + ':' + n;
+
+        (book.sheets || []).forEach(sh => addNode(sid(sh.name), 'sheet', sh.name, {
+            parent: P, bookIdx: bi, state: sh.state, ref: sh,
+        }));
+        (book.tables || []).forEach(t => addNode(tid(t.name), 'table', t.name, {
+            parent: P, bookIdx: bi, ref: t, sheet: t.sheet, fromQuery: t.tableType === 'queryTable',
+        }));
+        (book.names || []).filter(n => !n.builtin).forEach(n => addNode(nid(n.name), 'name', n.name, {
+            parent: P, bookIdx: bi, ref: n,
+        }));
+        (book.queries || []).forEach(q => addNode(qid(q.name), 'query', q.name, {
+            parent: P, bookIdx: bi, ref: q, isFunction: q.isFunction,
+        }));
+        (book.pivots || []).forEach(p => addNode(pid(p.name), 'pivot', p.name, {
+            parent: P, bookIdx: bi, ref: p, sheet: p.sheet,
+        }));
+        (book.externalLinks || []).forEach(x => addNode('x:' + bi + ':' + x.index, 'extbook', x.path.split(/[\\/]/).pop() || x.index, {
+            parent: P, bookIdx: bi, ref: x, fullPath: x.path,
+        }));
+
+        /* ── таблица лежит на листе */
+        (book.tables || []).forEach(t => { if (t.sheet) addEdge(tid(t.name), sid(t.sheet), 'contains'); });
+
+        /* ── ссылки формул: направление «откуда данные» → «кто их читает» */
+        (book.sheets || []).forEach(sh => {
+            (sh.refsOut || new Map()).forEach((cnt, target) => {
+                if (nodeIdx.has(sid(target))) addEdge(sid(target), sid(sh.name), 'ref', cnt);
+            });
+            (sh.tableRefs || new Map()).forEach((cnt, t) => {
+                if (nodeIdx.has(tid(t))) addEdge(tid(t), sid(sh.name), 'ref', cnt);
+            });
+            (sh.nameRefs || new Map()).forEach((cnt, n) => {
+                if (nodeIdx.has(nid(n))) { addEdge(nid(n), sid(sh.name), 'ref', cnt); const dn = (book.names || []).find(x => x.name === n); if (dn) dn.uses += cnt; }
+            });
+            (sh.extRefs || new Map()).forEach((cnt, x) => {
+                const link = (book.externalLinks || []).find(l => l.index === x);
+                if (link) {
+                    link.uses += cnt;
+                    if (link.usedBy.indexOf(sh.name) === -1) link.usedBy.push(sh.name);
+                    addEdge('x:' + bi + ':' + link.index, sid(sh.name), 'ext', cnt);
+                }
+            });
+            // «Невидимые» связи INDIRECT/OFFSET: помечаем сам лист, ребро построить не из чего
+            if ((sh.invisible || []).length) {
+                const n = nodeIdx.get(sid(sh.name));
+                if (n) n.hasInvisible = true;
+            }
+        });
+
+        /* ── именованный диапазон указывает на лист */
+        (book.names || []).filter(n => !n.builtin).forEach(n => {
+            const m = /^'?([^'!]+)'?!/.exec(String(n.ref || '').replace(/^=/, ''));
+            if (m && nodeIdx.has(sid(m[1]))) addEdge(sid(m[1]), nid(n.name), 'ref');
+        });
+
+        /* ── Power Query: источник → запрос → запрос → таблица */
+        (book.queries || []).forEach(q => {
+            q.sources.forEach(s => {
+                if (s.kind === 'workbook-table') {
+                    if (nodeIdx.has(tid(s.detail))) addEdge(tid(s.detail), qid(q.name), 'src');
+                    return;
+                }
+                const id = 'src:' + bi + ':' + s.kind + ':' + s.detail;
+                addNode(id, 'source', s.detail || s.label, { parent: P, bookIdx: bi, srcKind: s.kind, srcLabel: s.label, fullPath: s.detail });
+                addEdge(id, qid(q.name), 'src');
+            });
+            q.refs.forEach(r => { if (nodeIdx.has(qid(r))) addEdge(qid(r), qid(q.name), 'feed'); });
+            q.loadedTo.forEach(t => {
+                if (nodeIdx.has(tid(t))) addEdge(qid(q.name), tid(t), 'load');
+                else if (nodeIdx.has(sid(t))) addEdge(qid(q.name), sid(t), 'load');
+            });
+        });
+
+        /* ── сводные: откуда берут данные */
+        (book.pivots || []).forEach(p => {
+            if (p.sheet && nodeIdx.has(sid(p.sheet))) addEdge(pid(p.name), sid(p.sheet), 'contains');
+            const cache = (book.pivotCaches || [])[+p.cacheId - 1] ||
+                          (book.pivotCaches || []).find((c, i) => String(i + 1) === String(p.cacheId));
+            if (!cache) return;
+            if (cache.sheet && nodeIdx.has(sid(cache.sheet))) addEdge(sid(cache.sheet), pid(p.name), 'pivot');
+            if (cache.ref && nodeIdx.has(tid(cache.ref)))     addEdge(tid(cache.ref), pid(p.name), 'pivot');
+            (cache.hierarchies || []).filter(h => h.measure).forEach(h => {
+                const nm = (h.caption || h.uniqueName).replace(/^\[Measures]\.\[?|\]$/g, '');
+                const mid = 'm:' + bi + ':' + nm;
+                addNode(mid, 'measure', nm, { parent: P, bookIdx: bi, uniqueName: h.uniqueName });
+                addEdge(mid, pid(p.name), 'pivot');
+            });
+        });
+    });
+
+    /* ── степень связности и роль листа в потоке данных */
+    nodes.forEach(n => { n.inDeg = 0; n.outDeg = 0; });
+    edges.forEach(e => {
+        const s = nodeIdx.get(e.source), t = nodeIdx.get(e.target);
+        if (s) s.outDeg++;
+        if (t) t.inDeg++;
+    });
+    nodes.forEach(n => {
+        if (n.type !== 'sheet') return;
+        const up = edges.filter(e => e.target === n.id && e.type !== 'contains').length;
+        const down = edges.filter(e => e.source === n.id && e.type !== 'contains').length;
+        n.role = (!up && !down) ? 'изолирован' : (!up ? 'вход' : (!down ? 'выход' : 'расчёт'));
+        if (n.ref) n.ref.role = n.role;
+    });
+
+    return { nodes, edges, index: nodeIdx };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   АУДИТ КАЧЕСТВА
+   Правила именованные, как в линтере: каждое объясняет не только «что», но и
+   «почему это важно» — иначе список находок бесполезен для того, кто принимает
+   чужой файл в наследство.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const SEV = {
+    critical: { label: 'Критично', color: '#dc2626', weight: 14 },
+    major:    { label: 'Важно',    color: '#f59e0b', weight: 6  },
+    minor:    { label: 'Заметка',  color: '#3b82f6', weight: 2  },
+};
+
+function runAudit(books, graph) {
+    const issues = [];
+    const add = o => { if (o && o.count > 0) issues.push(o); };
+
+    books.forEach((book, bi) => {
+        const sheets = book.sheets || [];
+        const pre = books.length > 1 ? book.fileName + ' · ' : '';
+        const loc = (sh, cell) => pre + sh + (cell ? '!' + cell : '');
+
+        /* ─── КРИТИЧНО ─── */
+
+        // #REF! внутри формул — ссылка указывает в никуда
+        const refItems = [];
+        sheets.forEach(sh => (sh.errorCells || []).forEach(c => {
+            if (c.err === '#REF!' && refItems.length < 200) refItems.push({ loc: loc(sh.name, c.cell), txt: c.f || c.err });
+        }));
+        add({ id: 'ref-broken', category: 'Ошибки', severity: 'critical',
+            title: 'Ссылки #REF! в формулах',
+            desc: 'Формула ссылается на удалённый лист, строку или колонку.',
+            why: 'Это <strong>уже сломано</strong>: значение не считается и тянет ошибку вверх по всей цепочке. Обычно появляется после удаления листа или столбца, на который кто-то ссылался.',
+            count: refItems.length, items: refItems });
+
+        // Прочие ошибки в ячейках
+        const errAgg = new Map();
+        sheets.forEach(sh => (sh.errKinds || new Map()).forEach((n, e) => { if (e !== '#REF!') errAgg.set(e, (errAgg.get(e) || 0) + n); }));
+        const errItems = [];
+        sheets.forEach(sh => (sh.errorCells || []).forEach(c => {
+            if (c.err !== '#REF!' && errItems.length < 200) errItems.push({ loc: loc(sh.name, c.cell), txt: c.err + (c.f ? '  ←  ' + c.f : '') });
+        }));
+        add({ id: 'cell-errors', category: 'Ошибки', severity: 'critical',
+            title: 'Ошибки в ячейках: ' + Array.from(errAgg.entries()).map(([e, n]) => e + ' × ' + n).join(', '),
+            desc: 'Формулы возвращают ошибку вместо значения.',
+            why: 'Часть из них может быть «штатной» (#N/A в ВПР как маркер отсутствия), но каждая ошибка должна быть осознанной. Непойманная #DIV/0! в знаменателе отчёта — классика.',
+            count: Array.from(errAgg.values()).reduce((a, b) => a + b, 0), items: errItems });
+
+        // Битые именованные диапазоны — тихий убийца
+        const brokenNames = (book.names || []).filter(n => n.broken)
+            .map(n => ({ loc: pre + n.name, txt: n.ref }));
+        add({ id: 'names-broken', category: 'Ошибки', severity: 'critical',
+            title: 'Сломанные именованные диапазоны',
+            desc: 'Имя ссылается на #REF!.',
+            why: 'Самый незаметный из критичных дефектов: в самих ячейках может ничего не подсвечиваться, а имя уже мертво. Всплывает в самый неподходящий момент.',
+            count: brokenNames.length, items: brokenNames });
+
+        // Ручной режим пересчёта — файл показывает старые числа
+        if (book.calc && /manual/i.test(book.calc.mode)) {
+            add({ id: 'calc-manual', category: 'Ошибки', severity: 'critical',
+                title: 'Пересчёт формул переключён на «вручную»',
+                desc: 'Книга сохранена с calcMode = ' + book.calc.mode + '.',
+                why: 'Числа на экране могут <strong>не соответствовать формулам</strong>: Excel не пересчитывает их автоматически. Любой вывод по такому файлу нужно перепроверять после F9.',
+                count: 1, items: [{ loc: pre + 'книга', txt: 'calcMode = ' + book.calc.mode }] });
+        }
+
+        // Внешние ссылки на локальные диски
+        const localLinks = (book.externalLinks || []).filter(l => l.local)
+            .map(l => ({ loc: pre + l.index, txt: l.path + '  (используется на: ' + (l.usedBy.join(', ') || '—') + ')' }));
+        add({ id: 'ext-local', category: 'Связи', severity: 'critical',
+            title: 'Ссылки на файлы локального диска',
+            desc: 'Книга тянет данные по пути вида C:\\Users\\…',
+            why: 'У любого другого человека такой путь не существует — файл сломается при первом же открытии на другой машине. Данные нужно переносить внутрь книги или на общий ресурс.',
+            count: localLinks.length, items: localLinks });
+
+        /* ─── ВАЖНО ─── */
+
+        // Разрыв в формульной колонке: одна вбитая руками цифра среди формул
+        const gapItems = [];
+        sheets.forEach(sh => (sh.colStats || new Map()).forEach((cs, c) => {
+            if (cs.f < 5 || cs.k === 0) return;
+            const inside = cs.constRows.filter(r => r >= cs.minF && r <= cs.maxF);
+            if (!inside.length) return;
+            if (gapItems.length < 120) gapItems.push({
+                loc: loc(sh.name, colName(c) + (inside[0] + 1)),
+                txt: 'в колонке ' + colName(c) + ' — ' + cs.f + ' формул и ' + inside.length + ' вбитых значений (строки ' + inside.slice(0, 6).map(r => r + 1).join(', ') + (inside.length > 6 ? '…' : '') + ')',
+            });
+        }));
+        add({ id: 'col-gap', category: 'Структура', severity: 'major',
+            title: 'Значения, вбитые руками посреди формульной колонки',
+            desc: 'В колонке идут формулы, но отдельные ячейки заменены константами.',
+            why: 'Самая частая скрытая ошибка в чужих книгах: кто-то «поправил» одну цифру поверх формулы. Визуально не отличить, а итог уже неверный.',
+            count: gapItems.length, items: gapItems });
+
+        // INDIRECT/OFFSET — граф их принципиально не видит
+        const invItems = [];
+        sheets.forEach(sh => (sh.invisible || []).forEach(c => {
+            if (invItems.length < 150) invItems.push({ loc: loc(sh.name, c.cell), txt: c.f });
+        }));
+        add({ id: 'invisible-links', category: 'Связи', severity: 'major',
+            title: '«Невидимые» связи: INDIRECT / OFFSET',
+            desc: 'Адрес ссылки собирается строкой во время расчёта.',
+            why: 'Такие связи <strong>не видит ни граф, ни сам Excel</strong> при поиске зависимостей. Переименуйте лист — и формула молча сломается. Это первое место, куда стоит смотреть при разборе чужого файла.',
+            count: invItems.length, items: invItems });
+
+        // Летучие функции
+        const volAgg = new Map();
+        sheets.forEach(sh => (sh.funcs || new Map()).forEach((n, f) => { if (VOLATILE_FUNCS.has(f)) volAgg.set(f, (volAgg.get(f) || 0) + n); }));
+        add({ id: 'volatile', category: 'Производительность', severity: 'major',
+            title: 'Летучие функции: ' + Array.from(volAgg.keys()).join(', '),
+            desc: 'Пересчитываются при любом изменении в книге.',
+            why: 'Каждая правка в любой ячейке запускает пересчёт всех таких формул и всего, что от них зависит. На больших книгах это главная причина «Excel думает».',
+            count: Array.from(volAgg.values()).reduce((a, b) => a + b, 0),
+            items: Array.from(volAgg.entries()).map(([f, n]) => ({ loc: pre + f, txt: n + ' вхождений' })) });
+
+        // Ссылки на целые колонки
+        const wcItems = [];
+        sheets.forEach(sh => (sh.wholeCol || []).forEach(c => { if (wcItems.length < 100) wcItems.push({ loc: loc(sh.name, c.cell), txt: c.f }); }));
+        add({ id: 'whole-col', category: 'Производительность', severity: 'major',
+            title: 'Ссылки на колонку целиком (A:A)',
+            desc: 'Формула обрабатывает миллион строк вместо нужных.',
+            why: 'В ВПР/СУММЕСЛИ по всей колонке Excel честно перебирает 1 048 576 строк. Замена на умную таблицу или явный диапазон ускоряет книгу в разы.',
+            count: wcItems.length, items: wcItems });
+
+        // Скрытые и сверхскрытые листы
+        const hidden = sheets.filter(s => s.state !== 'visible')
+            .map(s => ({ loc: pre + s.name, txt: s.state === 'veryHidden' ? 'veryHidden — не виден даже в меню «Показать»' : 'скрыт' }));
+        add({ id: 'hidden-sheets', category: 'Структура', severity: 'major',
+            title: 'Скрытые листы',
+            desc: 'Листы, которых не видно при открытии книги.',
+            why: 'Обычная практика для служебных листов. Но <strong>veryHidden</strong> прячется даже из меню «Показать» — так скрывают либо технические таблицы, либо то, что не хотели показывать.',
+            count: hidden.length, items: hidden });
+
+        // Неиспользуемые запросы Power Query
+        const deadQueries = (book.queries || [])
+            .filter(q => !q.isFunction && !q.loadedTo.length && !(book.queries || []).some(o => o !== q && o.refs.indexOf(q.name) !== -1))
+            .map(q => ({ loc: pre + q.name, txt: 'нигде не используется и никуда не выгружается' }));
+        add({ id: 'dead-queries', category: 'Гигиена', severity: 'major',
+            title: 'Запросы Power Query, которые никому не нужны',
+            desc: 'Запрос не загружается на лист и не питает другие запросы.',
+            why: 'Либо остаток от экспериментов, либо потерянная ветка логики. При обновлении книги такие запросы всё равно могут выполняться и тянуть время.',
+            count: deadQueries.length, items: deadQueries });
+
+        // Изолированные листы
+        const orphan = (graph.nodes || []).filter(n => n.type === 'sheet' && n.bookIdx === bi && n.role === 'изолирован' && (n.ref || {}).cellCount > 0)
+            .map(n => ({ loc: pre + n.label, txt: 'ни одной связи с другими листами (' + fmtNum((n.ref || {}).cellCount) + ' заполненных ячеек)' }));
+        add({ id: 'orphan-sheets', category: 'Структура', severity: 'major',
+            title: 'Листы без единой связи',
+            desc: 'Лист заполнен, но ни на что не ссылается и никем не используется.',
+            why: 'Либо ручной справочник, либо забытая копия. При разборе чужой книги — первые кандидаты на вопрос «а это вообще нужно?».',
+            count: orphan.length, items: orphan });
+
+        /* ─── ЗАМЕТКИ ─── */
+
+        // Неиспользуемые имена
+        const unusedNames = (book.names || []).filter(n => !n.builtin && !n.broken && n.uses === 0)
+            .map(n => ({ loc: pre + n.name, txt: n.ref }));
+        add({ id: 'unused-names', category: 'Гигиена', severity: 'minor',
+            title: 'Именованные диапазоны, которые нигде не используются',
+            desc: 'Имя объявлено, но не встречается ни в одной формуле.',
+            why: 'Мусор из прошлых версий книги. Мешает при разборе: непонятно, важное это имя или забытое.',
+            count: unusedNames.length, items: unusedNames });
+
+        // Раздутый used range
+        const ghost = sheets.filter(s => s.rows > 500 && s.cellCount > 0 && (s.rows * s.cols) > s.cellCount * 25)
+            .map(s => ({ loc: pre + s.name, txt: 'диапазон ' + (s.dimension || '?') + ' (' + fmtNum(s.rows * s.cols) + ' ячеек), а заполнено всего ' + fmtNum(s.cellCount) }));
+        add({ id: 'ghost-range', category: 'Производительность', severity: 'minor',
+            title: '«Призрачный» диапазон листа',
+            desc: 'Excel считает лист намного больше, чем в нём реально данных.',
+            why: 'Остаётся после удаления строк без очистки форматов. Раздувает файл и замедляет прокрутку. Лечится удалением лишних строк целиком и пересохранением.',
+            count: ghost.length, items: ghost });
+
+        // Макросы
+        if (book.vba) {
+            add({ id: 'vba', category: 'Структура', severity: 'minor',
+                title: 'В книге есть макросы VBA',
+                desc: 'Найден xl/vbaProject.bin.',
+                why: 'Код макросов может менять данные и связи в обход формул — граф этого не покажет. Если книга ведёт себя странно, смотреть надо туда.',
+                count: 1, items: [{ loc: pre + 'книга', txt: 'модуль VBA присутствует' }] });
+        }
+
+        // Защита
+        const prot = sheets.filter(s => s.protected).map(s => ({ loc: pre + s.name, txt: 'лист защищён' }));
+        if (book.protectedWorkbook) prot.push({ loc: pre + 'книга', txt: 'защищена структура книги' });
+        add({ id: 'protection', category: 'Структура', severity: 'minor',
+            title: 'Защита листов или книги',
+            desc: 'Часть объектов защищена от изменений.',
+            why: 'Само по себе нормально, но объясняет, почему что-то «не редактируется». Учитывайте при доработке.',
+            count: prot.length, items: prot });
+
+        // Итеративные вычисления = сознательные циклические ссылки
+        if (book.calc && book.calc.iterate) {
+            add({ id: 'iterative', category: 'Ошибки', severity: 'major',
+                title: 'Включены итеративные вычисления',
+                desc: 'В книге разрешены циклические ссылки.',
+                why: 'Значит, они там <strong>есть</strong> и результат зависит от числа итераций. Такие модели крайне чувствительны к порядку расчёта — проверяйте сходимость.',
+                count: 1, items: [{ loc: pre + 'книга', txt: 'iterate = 1' }] });
+        }
+
+        // Приватность
+        const p = book.props || {};
+        const privacy = [];
+        if (p.creator) privacy.push({ loc: pre + 'Автор', txt: p.creator });
+        if (p.lastModifiedBy && p.lastModifiedBy !== p.creator) privacy.push({ loc: pre + 'Последний правил', txt: p.lastModifiedBy });
+        if (p.company) privacy.push({ loc: pre + 'Организация', txt: p.company });
+        add({ id: 'privacy', category: 'Гигиена', severity: 'minor',
+            title: 'В свойствах файла сохранены имена людей',
+            desc: 'Метаданные документа содержат ФИО автора и правившего.',
+            why: 'Полезно знать перед отправкой файла наружу: эти поля уезжают вместе с книгой и видны получателю.',
+            count: privacy.length, items: privacy });
+
+        // Слишком длинные формулы
+        const longItems = [];
+        sheets.forEach(sh => (sh.longest || []).slice(0, 5).forEach(l => {
+            if (l.len > 250 && longItems.length < 60) longItems.push({ loc: loc(sh.name, l.cell), txt: l.len + ' символов: ' + l.f.slice(0, 120) + '…' });
+        }));
+        add({ id: 'long-formula', category: 'Гигиена', severity: 'minor',
+            title: 'Формулы-простыни (длиннее 250 символов)',
+            desc: 'Формулу такой длины невозможно проверить глазами.',
+            why: 'Кандидаты на разбор через промежуточные колонки или ЛЕТ()/LAMBDA. При приёмке чужого файла это места наибольшего риска.',
+            count: longItems.length, items: longItems });
+    });
+
+    issues.sort((a, b) => SEV[b.severity].weight - SEV[a.severity].weight || b.count - a.count);
+    return issues;
+}
+
+/** Индекс здоровья: 100 минус штрафы, с разбивкой по категориям. */
+function computeHealth(issues) {
+    const cats = ['Ошибки', 'Связи', 'Структура', 'Производительность', 'Гигиена'];
+    const scores = {};
+    cats.forEach(c => {
+        const mine = issues.filter(i => i.category === c);
+        // Логарифм, а не линейка: 500 ошибок не должны быть «в 100 раз хуже» пяти
+        const penalty = mine.reduce((acc, i) => acc + SEV[i.severity].weight * Math.log10(i.count + 1) * 1.7, 0);
+        scores[c] = Math.max(0, Math.round(100 - penalty));
+    });
+    const total = Math.round(cats.reduce((a, c) => a + scores[c], 0) / cats.length);
+    return { total, scores, cats };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ЗАГРУЗКА И ОРКЕСТРАЦИЯ
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function logLine(kind, text) {
+    const el = document.createElement('div');
+    el.className = kind;
+    el.textContent = text;
+    const box = $('#progress-log');
+    box.appendChild(el);
+    box.scrollTop = box.scrollHeight;
+}
+const setProgress = pct => { $('#progress-fill').style.width = Math.max(0, Math.min(100, pct)) + '%'; };
+
+/** Связываем запросы с таблицами и подключениями: куда именно запрос приземляется. */
+function linkQueries(book) {
+    const tableNames = new Set((book.tables || []).map(t => t.name));
+    (book.queries || []).forEach(q => {
+        if (tableNames.has(q.name)) q.loadedTo.push(q.name);
+        (book.connections || []).filter(c => c.isMashup).forEach(c => {
+            const loc = (/Location=([^;]+)/.exec(c.connStr) || [])[1] || (/\[([^\]]+)\]/.exec(c.command) || [])[1];
+            if (!loc) return;
+            let decoded = loc.trim();
+            try { decoded = decodeURIComponent(decoded); } catch (e) { /* оставляем как есть */ }
+            if (decoded !== q.name) return;
+            q.connection = c.name;
+            if (c.onlyConnection) q.onlyConnection = true;
+            (book.queryTables || []).filter(t => t.connectionId === c.id).forEach(t => {
+                if (t.sheet) q.loadedTo.push(t.sheet);
+            });
+        });
+        q.loadedTo = Array.from(new Set(q.loadedTo));
+    });
+}
+
+/** Модель данных: всё, что вообще достижимо без запуска Excel. */
+function summarizeModel(book) {
+    const measures = new Map();
+    const tables = new Map();
+    (book.pivotCaches || []).forEach(pc => (pc.hierarchies || []).forEach(h => {
+        const un = h.uniqueName || '';
+        const m = /^\[([^\]]+)\]\.\[([^\]]+)\]/.exec(un);
+        if (h.measure) {
+            const nm = (h.caption || un).replace(/^\[Measures]\.\[?/, '').replace(/\]$/, '');
+            if (!measures.has(nm)) measures.set(nm, { name: nm, uniqueName: un, table: m && m[1] !== 'Measures' ? m[1] : null });
+        } else if (m && m[1] !== 'Measures') {
+            if (!tables.has(m[1])) tables.set(m[1], { name: m[1], columns: new Set() });
+            tables.get(m[1]).columns.add(m[2]);
+        }
+    }));
+    book.model = {
+        present: !!book.modelRaw,
+        rawSize: book.modelSize || 0,
+        measures: Array.from(measures.values()),
+        tables: Array.from(tables.values()).map(t => ({ name: t.name, columns: Array.from(t.columns) })),
+        connection: (book.connections || []).find(c => c.isModel) || null,
+    };
+}
+
+async function loadFiles(fileList) {
+    const files = Array.from(fileList);
+    if (!files.length) return;
+
+    $('#progress-box').classList.add('on');
+    $('#progress-log').innerHTML = '';
+    setProgress(2);
+    APP.books = [];
+
+    for (let fi = 0; fi < files.length; fi++) {
+        const file = files[fi];
+        const base = fi / files.length * 100;
+        const span = 100 / files.length;
+        try {
+            logLine('ok', '─── ' + file.name + ' (' + fmtBytes(file.size) + ')');
+            setProgress(base + span * 0.1);
+            await nextFrame();
+
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            const format = detectFormat(bytes, file.name);
+            const book = {
+                id: 'b' + fi, fileName: file.name, size: file.size, format,
+                sheets: [], tables: [], names: [], connections: [], queries: [],
+                pivots: [], pivotCaches: [], queryTables: [], externalLinks: [],
+                props: {}, calc: { mode: 'auto', iterate: false },
+            };
+
+            if (format === 'xls') {
+                logLine('warn', 'Формат .xls: разбор ограничен возможностями формата — умных таблиц и Power Query в нём нет в принципе.');
+                const XLSX = await ensureSheetJS();
+                const wb = XLSX.read(bytes, { type: 'array', cellFormula: true, cellStyles: false, sheetStubs: false });
+                buildFromSheetJS(wb, book);
+            } else if (format === 'xlsb') {
+                logLine('warn', 'Формат .xlsb: листы двоичные, читаются через SheetJS. Power Query достаётся полностью.');
+                await parseOOXML(bytes, book, logLine);
+                const XLSX = await ensureSheetJS();
+                const wb = XLSX.read(bytes, { type: 'array', cellFormula: true, cellStyles: false });
+                buildFromSheetJS(wb, book);
+            } else {
+                await parseOOXML(bytes, book, logLine);
+            }
+
+            linkQueries(book);
+            summarizeModel(book);
+            APP.books.push(book);
+            setProgress(base + span * 0.95);
+            logLine('ok', 'Готово: листов ' + book.sheets.length + ', таблиц ' + book.tables.length + ', запросов ' + (book.queries || []).length);
+        } catch (e) {
+            logLine('err', file.name + ' — ' + e.message);
+            showNotification(file.name + ': ' + e.message, 'error', 9000);
+            console.error(e);
+        }
+        await nextFrame();
+    }
+
+    if (!APP.books.length) { setProgress(0); return; }
+
+    logLine('ok', 'Строю граф связей…');
+    await nextFrame();
+    APP.graph  = buildGraph(APP.books);
+    deriveInvisibleEdges(APP.graph, APP.books);   // догадки по INDIRECT("Лист!A1")
+    APP.issues = runAudit(APP.books, APP.graph);
+    APP.health = computeHealth(APP.issues);
+    setProgress(100);
+    logLine('ok', 'Узлов ' + APP.graph.nodes.length + ', связей ' + APP.graph.edges.length + ', находок ' + APP.issues.length);
+
+    renderAll();
+    unlockPages();
+    goPage('overview');
+    showNotification('Разбор завершён: ' + APP.graph.nodes.length + ' объектов, ' + APP.graph.edges.length + ' связей', 'success', 4500);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ОТРИСОВКА
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function renderAll() {
+    renderLoadedList();
+    renderOverview();
+    renderSheets();
+    renderFormulas();
+    renderPQ();
+    renderModel();
+    renderQuality();
+    renderReport();
+    renderGraph();
+    renderBadges();
+}
+
+function renderBadges() {
+    const set = (id, val, cls) => {
+        const el = $(id);
+        if (!el) return;
+        if (!val) { el.hidden = true; return; }
+        el.hidden = false; el.textContent = val;
+        el.className = 'nav-badge' + (cls ? ' ' + cls : '');
+    };
+    // Группировка по книгам осмысленна только при нескольких файлах — иначе это мёртвый переключатель
+    const grp = $('#opt-groups');
+    grp.disabled = APP.books.length < 2;
+    grp.closest('.chk').style.opacity = grp.disabled ? .45 : 1;
+    grp.closest('.chk').title = grp.disabled ? 'Нужны минимум две книги' : 'Показывать листы внутри рамки книги';
+
+    const totalSheets = APP.books.reduce((a, b) => a + b.sheets.length, 0);
+    const totalQ = APP.books.reduce((a, b) => a + (b.queries || []).length, 0);
+    const crit = APP.issues.filter(i => i.severity === 'critical').length;
+    const major = APP.issues.filter(i => i.severity === 'major').length;
+    set('#badge-sheets', totalSheets);
+    set('#badge-pq', totalQ || null);
+    set('#badge-graph', APP.graph.nodes.length);
+    set('#badge-quality', crit || major || null, crit ? 'bad' : 'warn');
+    $('#sidebar-file').textContent = APP.books.length === 1 ? APP.books[0].fileName : APP.books.length + ' книги';
+}
+
+function renderLoadedList() {
+    const el = $('#loaded-list');
+    if (!APP.books.length) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="card"><div class="card-title">Загружено</div>' +
+        APP.books.map(b => {
+            const conf = b.format === 'xlsx' ? ['full', 'полный разбор'] : b.format === 'xlsb' ? ['partial', 'частичный разбор'] : ['partial', 'ограниченный разбор'];
+            return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--border-light)">' +
+                '<strong style="flex:1;min-width:180px;overflow-wrap:anywhere">' + esc(b.fileName) + '</strong>' +
+                '<span class="pill pill-gray">' + esc(b.format) + '</span>' +
+                '<span class="muted">' + fmtBytes(b.size) + '</span>' +
+                '<span class="muted">' + b.sheets.length + ' лист.</span>' +
+                '<span class="confidence ' + conf[0] + '">' + conf[1] + '</span>' +
+                '</div>';
+        }).join('') + '</div>';
+}
+
+/* ─────────────── ОБЗОР ─────────────── */
+
+function renderOverview() {
+    const B = APP.books;
+    const sum = fn => B.reduce((a, b) => a + fn(b), 0);
+    const sheets = sum(b => b.sheets.length);
+    const formulas = sum(b => b.sheets.reduce((x, s) => x + (s.formulaCount || 0), 0));
+    const errors = sum(b => b.sheets.reduce((x, s) => x + (s.errorCount || 0), 0));
+    const queries = sum(b => (b.queries || []).length);
+    const tables = sum(b => (b.tables || []).length);
+    const ext = sum(b => (b.externalLinks || []).length);
+    const pivots = sum(b => (b.pivots || []).length);
+    const hidden = sum(b => b.sheets.filter(s => s.state !== 'visible').length);
+
+    $('#overview-sub').textContent = B.length === 1 ? B[0].fileName : B.length + ' книги';
+
+    const kpi = [
+        { label: 'Листов',        value: sheets,   sub: hidden ? hidden + ' скрытых' : 'все видимые', color: 'var(--n-sheet)', page: 'sheets' },
+        { label: 'Формул',        value: formulas, sub: 'в ячейках', color: 'var(--primary)', page: 'formulas' },
+        { label: 'Умных таблиц',  value: tables,   sub: 'ListObject', color: 'var(--n-table)', page: 'sheets' },
+        { label: 'Запросов PQ',   value: queries,  sub: queries ? 'M-код доступен' : 'не найдено', color: 'var(--n-query)', page: 'pq' },
+        { label: 'Сводных',       value: pivots,   sub: 'PivotTable', color: 'var(--n-pivot)', page: 'model' },
+        { label: 'Внешних книг',  value: ext,      sub: ext ? 'проверьте пути' : 'нет', color: 'var(--n-extbook)', page: 'formulas' },
+        { label: 'Ошибок',        value: errors,   sub: 'в ячейках', color: 'var(--danger)', page: 'quality' },
+        { label: 'Связей в графе',value: APP.graph.edges.length, sub: APP.graph.nodes.length + ' объектов', color: 'var(--purple)', page: 'graph' },
+    ];
+    $('#overview-kpi').innerHTML = kpi.map(k =>
+        '<div class="kpi clickable" style="--kpi-color:' + k.color + '" data-goto="' + k.page + '" tabindex="0" role="button">' +
+        '<div class="kpi-label">' + esc(k.label) + '</div>' +
+        '<div class="kpi-value">' + fmtNum(k.value) + '</div>' +
+        '<div class="kpi-sub">' + esc(k.sub) + '</div></div>').join('');
+
+    /* индекс здоровья */
+    const h = APP.health;
+    const col = v => v >= 80 ? '#10b981' : v >= 60 ? '#f59e0b' : '#ef4444';
+    const R = 50, C = 2 * Math.PI * R;
+    $('#overview-health').innerHTML =
+        '<div class="health-ring">' +
+          '<svg viewBox="0 0 116 116">' +
+            '<circle cx="58" cy="58" r="' + R + '" fill="none" stroke="#e2e8f0" stroke-width="9"/>' +
+            '<circle cx="58" cy="58" r="' + R + '" fill="none" stroke="' + col(h.total) + '" stroke-width="9" stroke-linecap="round"' +
+            ' stroke-dasharray="' + C + '" stroke-dashoffset="' + (C * (1 - h.total / 100)) + '"/>' +
+          '</svg>' +
+          '<div class="hr-val"><div class="hr-num" style="color:' + col(h.total) + '">' + h.total + '</div><div class="hr-cap">из 100</div></div>' +
+        '</div>' +
+        '<div class="health-bars">' + h.cats.map(c =>
+            '<div class="health-bar-row"><span>' + esc(c) + '</span>' +
+            '<span class="health-bar-track"><span class="health-bar-fill" style="width:' + h.scores[c] + '%;background:' + col(h.scores[c]) + '"></span></span>' +
+            '<span class="health-bar-num" style="color:' + col(h.scores[c]) + '">' + h.scores[c] + '</span></div>').join('') +
+        '</div>';
+
+    /* топ находок */
+    const top = APP.issues.slice(0, 5);
+    $('#overview-top-issues').innerHTML = top.length
+        ? top.map(i => '<div style="display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px solid var(--border-light)">' +
+            '<span class="pill pill-' + (i.severity === 'critical' ? 'red' : i.severity === 'major' ? 'amber' : 'blue') + '">' + SEV[i.severity].label + '</span>' +
+            '<span style="flex:1;min-width:0"><strong style="font-size:13px">' + esc(i.title) + '</strong><br><span class="muted">' + esc(i.desc) + '</span></span>' +
+            '<span class="mono" style="font-weight:800">' + fmtNum(i.count) + '</span></div>').join('') +
+          '<button class="btn btn-outline btn-sm" data-goto="quality" style="margin-top:12px">Все находки →</button>'
+        : '<div class="empty-state">Претензий к файлу нет — редкий случай.</div>';
+
+    /* паспорт */
+    const rows = [];
+    B.forEach(b => {
+        const p = b.props || {};
+        rows.push(['Файл', b.fileName + ' · ' + fmtBytes(b.size) + ' · ' + b.format]);
+        if (p.title) rows.push(['Название', p.title]);
+        if (p.creator) rows.push(['Автор', p.creator]);
+        if (p.lastModifiedBy) rows.push(['Последний правил', p.lastModifiedBy]);
+        if (p.created) rows.push(['Создан', fmtDate(p.created)]);
+        if (p.modified) rows.push(['Изменён', fmtDate(p.modified)]);
+        if (p.app) rows.push(['Приложение', p.app + (p.appVersion ? ' ' + p.appVersion : '')]);
+        if (p.company) rows.push(['Организация', p.company]);
+        rows.push(['Режим пересчёта', (b.calc.mode === 'auto' ? 'автоматический' : b.calc.mode) + (b.calc.iterate ? ' · итеративные вычисления включены' : '')]);
+        rows.push(['Макросы VBA', b.vba ? 'есть' : 'нет']);
+        rows.push(['Модель данных', b.model && b.model.present ? 'есть (' + fmtBytes(b.model.rawSize) + ')' : 'нет']);
+    });
+    $('#overview-props').innerHTML = rows.map(r =>
+        '<tr><td style="width:210px;color:var(--text-muted);font-weight:600">' + esc(r[0]) + '</td><td style="font-weight:600;overflow-wrap:anywhere">' + esc(r[1]) + '</td></tr>').join('');
+}
+
+/* ─────────────── ЛИСТЫ И ТАБЛИЦЫ ─────────────── */
+
+let sheetSort = { key: 'formulas', dir: -1 };
+
+function sheetRows() {
+    const rows = [];
+    APP.books.forEach((b, bi) => b.sheets.forEach(s => {
+        const node = APP.graph.index.get('s:' + bi + ':' + s.name);
+        rows.push({
+            book: b.fileName, bookIdx: bi, name: s.name, state: s.state,
+            role: (node && node.role) || '—',
+            formulas: s.formulaCount || 0, consts: s.constCount || 0, errors: s.errorCount || 0,
+            inDeg: node ? node.inDeg : 0, outDeg: node ? node.outDeg : 0,
+            dim: s.dimension || '—', sheet: s, nodeId: node ? node.id : null,
+        });
+    }));
+    const k = sheetSort.key, d = sheetSort.dir;
+    rows.sort((a, b) => {
+        const x = a[k], y = b[k];
+        if (typeof x === 'number') return (x - y) * d;
+        return String(x).localeCompare(String(y), 'ru') * d;
+    });
+    return rows;
+}
+
+const STATE_PILL = {
+    visible:    ['pill-green', 'видимый'],
+    hidden:     ['pill-amber', 'скрыт'],
+    veryHidden: ['pill-red',   'veryHidden'],
+};
+const ROLE_PILL = {
+    'вход':       ['pill-teal',   'вход'],
+    'расчёт':     ['pill-blue',   'расчёт'],
+    'выход':      ['pill-purple', 'выход'],
+    'изолирован': ['pill-gray',   'изолирован'],
+};
+
+function renderSheets() {
+    const rows = sheetRows();
+    $('#sheets-tbody').innerHTML = rows.map(r => {
+        const st = STATE_PILL[r.state] || ['pill-gray', r.state];
+        const ro = ROLE_PILL[r.role] || ['pill-gray', r.role];
+        return '<tr class="row-link" data-sheet="' + esc(r.bookIdx + '|' + r.name) + '">' +
+            '<td><strong>' + esc(r.name) + '</strong>' + (APP.books.length > 1 ? '<br><span class="muted" style="font-size:11px">' + esc(r.book) + '</span>' : '') + '</td>' +
+            '<td><span class="pill ' + st[0] + '">' + st[1] + '</span></td>' +
+            '<td><span class="pill ' + ro[0] + '">' + ro[1] + '</span></td>' +
+            '<td class="num-cell">' + fmtNum(r.formulas) + '</td>' +
+            '<td class="num-cell">' + fmtNum(r.consts) + '</td>' +
+            '<td class="num-cell"' + (r.errors ? ' style="color:var(--danger);font-weight:700"' : '') + '>' + fmtNum(r.errors) + '</td>' +
+            '<td class="num-cell">' + fmtNum(r.inDeg) + '</td>' +
+            '<td class="num-cell">' + fmtNum(r.outDeg) + '</td>' +
+            '<td class="mono" style="font-size:11px;color:var(--text-muted)">' + esc(r.dim) + '</td>' +
+            '</tr>';
+    }).join('') || '<tr><td colspan="9" class="empty-state">Листов не найдено</td></tr>';
+
+    const allTables = [];
+    APP.books.forEach(b => (b.tables || []).forEach(t => allTables.push(Object.assign({ book: b.fileName }, t))));
+    $('#tables-hint').textContent = allTables.length ? allTables.length + ' шт.' : '';
+    $('#tables-tbody').innerHTML = allTables.map(t =>
+        '<tr><td><strong>' + esc(t.name) + '</strong></td>' +
+        '<td>' + esc(t.sheet || '—') + '</td>' +
+        '<td class="mono" style="font-size:11px">' + esc(t.ref || '—') + '</td>' +
+        '<td class="num-cell">' + (t.columns || []).length + '</td>' +
+        '<td>' + (t.tableType === 'queryTable'
+            ? '<span class="pill pill-purple"><span class="pill-dot"></span>Power Query</span>'
+            : '<span class="pill pill-gray">лист</span>') + '</td>' +
+        '<td class="muted" style="font-size:11.5px">' + esc((t.columns || []).slice(0, 8).join(', ')) + ((t.columns || []).length > 8 ? '…' : '') + '</td></tr>'
+    ).join('') || '<tr><td colspan="6" class="empty-state">Умных таблиц нет' +
+        (APP.books.some(b => b.format === 'xls') ? ' (формат .xls их не поддерживает)' : '') + '</td></tr>';
+
+    const allNames = [];
+    APP.books.forEach(b => (b.names || []).filter(n => !n.builtin).forEach(n => allNames.push(n)));
+    $('#names-tbody').innerHTML = allNames.map(n =>
+        '<tr><td><strong>' + esc(n.name) + '</strong></td>' +
+        '<td>' + esc(n.scope) + '</td>' +
+        '<td class="mono" style="font-size:11px;overflow-wrap:anywhere">' + esc(n.ref) + '</td>' +
+        '<td class="num-cell">' + fmtNum(n.uses) + '</td>' +
+        '<td>' + (n.broken ? '<span class="pill pill-red">сломан</span>'
+                : n.uses === 0 ? '<span class="pill pill-amber">не используется</span>'
+                : '<span class="pill pill-green">в работе</span>') + '</td></tr>'
+    ).join('') || '<tr><td colspan="5" class="empty-state">Именованных диапазонов нет</td></tr>';
+}
+
+/** Тепловая карта листа: каждый пиксель — ячейка (или группа при больших листах). */
+const HEAT_COLORS = ['#f8fafc', '#94a3b8', '#f59e0b', '#2563eb', '#ef4444'];
+
+function showSheetDetail(bookIdx, name) {
+    const book = APP.books[bookIdx];
+    const sh = book.sheets.find(s => s.name === name);
+    if (!sh) return;
+    APP.activeSheet = sh;
+
+    $('#sheet-detail-card').hidden = false;
+    $('#sheet-detail-title').textContent = 'Лист «' + name + '»';
+
+    const heat = sh.heat || { w: 1, h: 1, data: new Uint8Array(1) };
+    const cv = $('#heat-canvas');
+    const scale = Math.max(1, Math.floor(240 / Math.max(heat.w, heat.h)));
+    cv.width = heat.w * scale; cv.height = heat.h * scale;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = HEAT_COLORS[0];
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    for (let y = 0; y < heat.h; y++) for (let x = 0; x < heat.w; x++) {
+        const v = heat.data[y * heat.w + x];
+        if (!v) continue;
+        ctx.fillStyle = HEAT_COLORS[v];
+        ctx.fillRect(x * scale, y * scale, scale, scale);
+    }
+
+    const node = APP.graph.index.get('s:' + bookIdx + ':' + name);
+    const upstream   = APP.graph.edges.filter(e => e.target === (node || {}).id);
+    const downstream = APP.graph.edges.filter(e => e.source === (node || {}).id);
+    const nm = id => (APP.graph.index.get(id) || {}).label || id;
+    const self = (node || {}).id;
+    const uniq = (edges, side) => Array.from(new Set(edges.map(e => e[side]))).filter(x => x !== self).map(nm);
+    const upNames = uniq(upstream, 'source');
+    const downNames = uniq(downstream, 'target');
+
+    $('#sheet-detail-info').innerHTML =
+        '<strong>Диапазон:</strong> ' + esc(sh.dimension || '—') + ' &nbsp;·&nbsp; ' +
+        '<strong>заполнено:</strong> ' + fmtNum(sh.cellCount) + ' яч.<br>' +
+        '<strong>Формул:</strong> ' + fmtNum(sh.formulaCount) + ' &nbsp;·&nbsp; ' +
+        '<strong>констант:</strong> ' + fmtNum(sh.constCount) + ' &nbsp;·&nbsp; ' +
+        '<strong>текста:</strong> ' + fmtNum(sh.textCount) + ' &nbsp;·&nbsp; ' +
+        '<strong>ошибок:</strong> ' + fmtNum(sh.errorCount) + '<br>' +
+        '<strong>Объединённых ячеек:</strong> ' + fmtNum(sh.merged || 0) +
+        ' &nbsp;·&nbsp; <strong>условное форматирование:</strong> ' + fmtNum(sh.condFmt || 0) +
+        ' &nbsp;·&nbsp; <strong>проверка данных:</strong> ' + fmtNum(sh.dataValid || 0) + '<br><br>' +
+        '<strong>Берёт данные из:</strong> ' + (upNames.length ? esc(upNames.join(', ')) : '<span class="muted">ни из чего</span>') + '<br>' +
+        '<strong>Отдаёт данные в:</strong> ' + (downNames.length ? esc(downNames.join(', ')) : '<span class="muted">никуда</span>') +
+        '<br><br><button class="btn btn-outline btn-sm" data-focus-node="' + esc((node || {}).id || '') + '">Показать в графе →</button>';
+
+    $('#sheet-detail-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/* ─────────────── ФОРМУЛЫ И ССЫЛКИ ─────────────── */
+
+/** Заметки к функциям: почему на неё стоит обратить внимание при разборе книги. */
+const FUNC_NOTES = {
+    INDIRECT: ['red',   'связь собирается строкой — граф её не видит'],
+    OFFSET:   ['red',   'летучая + невидимая связь'],
+    NOW:      ['amber', 'летучая: пересчёт при любой правке'],
+    TODAY:    ['amber', 'летучая: пересчёт при любой правке'],
+    RAND:     ['amber', 'летучая, результат меняется сам'],
+    RANDBETWEEN: ['amber', 'летучая, результат меняется сам'],
+    CELL:     ['amber', 'летучая'],
+    INFO:     ['amber', 'летучая'],
+    VLOOKUP:  ['gray',  'ВПР — хрупок к вставке колонок, лучше ИНДЕКС+ПОИСКПОЗ'],
+    HLOOKUP:  ['gray',  'ГПР — хрупок к вставке строк'],
+    IFERROR:  ['gray',  'может прятать настоящие ошибки'],
+    IFNA:     ['gray',  'может прятать настоящие ошибки'],
+};
+
+function renderFormulas() {
+    /* матрица лист × лист */
+    const sheetNodes = APP.graph.nodes.filter(n => n.type === 'sheet');
+    const refEdges = APP.graph.edges.filter(e => e.type === 'ref' &&
+        (APP.graph.index.get(e.source) || {}).type === 'sheet' &&
+        (APP.graph.index.get(e.target) || {}).type === 'sheet');
+
+    const totalRefs = refEdges.reduce((a, e) => a + e.count, 0);
+    $('#formulas-sub').textContent = fmtNum(totalRefs) + ' межлистовых ссылок';
+
+    const holder = $('#matrix-holder');
+    if (!sheetNodes.length || !refEdges.length) {
+        holder.innerHTML = '<div class="empty-state">Ссылок между листами не найдено — каждый лист живёт сам по себе.</div>';
+    } else {
+        // Показываем только листы, реально участвующие в связях: иначе матрица утонет в пустоте
+        const involved = new Set();
+        refEdges.forEach(e => { involved.add(e.source); involved.add(e.target); });
+        const list = sheetNodes.filter(n => involved.has(n.id));
+        const map = new Map(refEdges.map(e => [e.source + '>' + e.target, e.count]));
+        const max = Math.max.apply(null, refEdges.map(e => e.count));
+
+        let html = '<div class="matrix-box"><table class="matrix"><thead><tr><th class="corner">берёт из ↓ / отдаёт в →</th>';
+        list.forEach(c => { html += '<th class="col-h"><div class="rot">' + esc(c.label) + '</div></th>'; });
+        html += '</tr></thead><tbody>';
+        list.forEach(r => {
+            html += '<tr><th class="row-h" title="' + esc(r.label) + '">' + esc(r.label) + '</th>';
+            list.forEach(c => {
+                if (r.id === c.id) { html += '<td class="cell diag"></td>'; return; }
+                const n = map.get(r.id + '>' + c.id);
+                if (!n) { html += '<td class="cell"></td>'; return; }
+                const alpha = 0.14 + 0.72 * (Math.log10(n + 1) / Math.log10(max + 1));
+                html += '<td class="cell" data-n="' + n + '" title="' + esc(r.label) + ' → ' + esc(c.label) + ': ' + n + ' ссылок"' +
+                        ' style="background:rgba(37,99,235,' + alpha.toFixed(2) + ');color:' + (alpha > 0.5 ? '#fff' : '#1e40af') + '">' + n + '</td>';
+            });
+            html += '</tr>';
+        });
+        holder.innerHTML = html + '</tbody></table></div>';
+    }
+
+    /* внешние ссылки */
+    const links = [];
+    APP.books.forEach(b => (b.externalLinks || []).forEach(l => links.push(Object.assign({ book: b.fileName }, l))));
+    $('#extlinks-tbody').innerHTML = links.map(l =>
+        '<tr><td class="mono">' + esc(l.index) + '</td>' +
+        '<td class="mono" style="font-size:11.5px;overflow-wrap:anywhere">' + esc(l.path) + '</td>' +
+        '<td>' + (l.usedBy.length ? esc(l.usedBy.join(', ')) + ' <span class="muted">(' + fmtNum(l.uses) + ')</span>' : '<span class="muted">не используется</span>') + '</td>' +
+        '<td>' + (l.local ? '<span class="pill pill-red">локальный путь</span>'
+                : l.uses === 0 ? '<span class="pill pill-amber">висячая</span>'
+                : '<span class="pill pill-green">рабочая</span>') + '</td></tr>'
+    ).join('') || '<tr><td colspan="4" class="empty-state">Внешних ссылок нет — книга самодостаточна.</td></tr>';
+
+    /* функции */
+    const funcs = new Map();
+    APP.books.forEach(b => b.sheets.forEach(s => (s.funcs || new Map()).forEach((n, f) => funcs.set(f, (funcs.get(f) || 0) + n))));
+    const top = Array.from(funcs.entries()).sort((a, b) => b[1] - a[1]).slice(0, 25);
+    $('#funcs-tbody').innerHTML = top.map(([f, n]) => {
+        const note = FUNC_NOTES[f];
+        return '<tr><td class="mono"><strong>' + esc(f) + '</strong></td><td class="num-cell">' + fmtNum(n) + '</td>' +
+            '<td>' + (note ? '<span class="pill pill-' + note[0] + '">' + esc(note[1]) + '</span>' : '') + '</td></tr>';
+    }).join('') || '<tr><td colspan="3" class="empty-state">Формул не найдено</td></tr>';
+
+    /* самые длинные формулы */
+    const longest = [];
+    APP.books.forEach((b, bi) => b.sheets.forEach(s => (s.longest || []).forEach(l =>
+        longest.push({ bi, sheet: s.name, cell: l.cell, len: l.len, f: l.f }))));
+    longest.sort((a, b) => b.len - a.len);
+    $('#longest-formulas').innerHTML = longest.slice(0, 8).map(l =>
+        '<div style="margin-bottom:11px">' +
+        '<div style="font-size:12px;margin-bottom:4px"><strong class="mono">' + esc(l.sheet) + '!' + esc(l.cell) + '</strong> ' +
+        '<span class="muted">— ' + l.len + ' символов</span></div>' +
+        '<div class="formula-box">' + highlightFormula(l.f.length > 400 ? l.f.slice(0, 400) + ' …' : l.f) + '</div></div>'
+    ).join('') || '<div class="empty-state">Длинных формул нет — это хороший знак.</div>';
+}
+
+/* ─────────────── POWER QUERY ─────────────── */
+
+const M_SOURCE_NAMES = new Set(['Excel.CurrentWorkbook', 'Excel.Workbook', 'Csv.Document', 'Json.Document',
+    'File.Contents', 'Folder.Files', 'Folder.Contents', 'Sql.Database', 'Sql.Databases', 'PostgreSQL.Database',
+    'MySQL.Database', 'Oracle.Database', 'Access.Database', 'Odbc.DataSource', 'Odbc.Query', 'OleDb.DataSource',
+    'SharePoint.Tables', 'SharePoint.Files', 'SharePoint.Contents', 'OData.Feed', 'Web.Contents', 'Web.Page',
+    'Web.BrowserContents', 'AnalysisServices.Database', 'AnalysisServices.Databases']);
+
+const M_KEYWORDS = /^(let|in|each|if|then|else|try|otherwise|error|type|as|is|meta|section|shared|and|or|not|true|false|null)$/;
+
+/** Подсветка M-кода. Полноценный проход токенами, а не регулярки по HTML. */
+function highlightM(code) {
+    let out = '', i = 0;
+    while (i < code.length) {
+        const ch = code[i];
+        if (ch === '/' && code[i + 1] === '/') {
+            const nl = code.indexOf('\n', i); const e = nl === -1 ? code.length : nl;
+            out += '<span class="m-com">' + esc(code.slice(i, e)) + '</span>'; i = e; continue;
+        }
+        if (ch === '/' && code[i + 1] === '*') {
+            const e = code.indexOf('*/', i); const end = e === -1 ? code.length : e + 2;
+            out += '<span class="m-com">' + esc(code.slice(i, end)) + '</span>'; i = end; continue;
+        }
+        if (ch === '"') { const e = mSkipString(code, i); out += '<span class="m-str">' + esc(code.slice(i, e)) + '</span>'; i = e; continue; }
+        if (ch === '#' && code[i + 1] === '"') { const e = mSkipString(code, i + 1); out += esc(code.slice(i, e)); i = e; continue; }
+        if (isIdChar(ch) && !/[0-9.]/.test(ch)) {
+            let j = i;
+            while (j < code.length && isIdChar(code[j])) j++;
+            const w = code.slice(i, j);
+            let cls = '';
+            if (M_SOURCE_NAMES.has(w)) cls = 'm-src';
+            else if (M_KEYWORDS.test(w)) cls = 'm-kw';
+            else if (code[j] === '(' || w.indexOf('.') !== -1) cls = 'm-fn';
+            out += cls ? '<span class="' + cls + '">' + esc(w) + '</span>' : esc(w);
+            i = j; continue;
+        }
+        if (/[0-9]/.test(ch)) {
+            let j = i; while (j < code.length && /[0-9.]/.test(code[j])) j++;
+            out += '<span class="m-num">' + esc(code.slice(i, j)) + '</span>'; i = j; continue;
+        }
+        out += esc(ch); i++;
+    }
+    return out;
+}
+
+const SRC_ICON = { db: '🗄', file: '📄', folder: '📁', web: '🌐', 'workbook-table': '▦' };
+
+function renderPQ() {
+    const all = [];
+    APP.books.forEach((b, bi) => (b.queries || []).forEach(q => all.push(Object.assign({ bi, book: b.fileName }, q))));
+    $('#pq-sub').textContent = all.length ? all.length + ' запросов' : '';
+    $('#btn-export-m').disabled = !all.length;
+
+    if (!all.length) {
+        const hasXls = APP.books.some(b => b.format === 'xls');
+        $('#pq-content').innerHTML = '<div class="card"><div class="empty-state">' +
+            (hasXls ? 'В формате .xls технологии Power Query не существовало.'
+                    : 'В книге нет запросов Power Query — контейнер DataMashup отсутствует.') +
+            '</div></div>';
+        return;
+    }
+
+    $('#pq-content').innerHTML =
+        '<div class="card"><div class="card-title">Сводка по запросам ' +
+        '<span class="confidence full"><svg viewBox="0 0 24 24"><path d="m9 12 2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>полный M-код</span></div>' +
+        '<div class="table-box"><table class="wide"><thead><tr>' +
+        '<th>Запрос</th><th>Источники</th><th class="num-cell">Шагов</th><th>Берёт из запросов</th><th>Загружается в</th></tr></thead><tbody>' +
+        all.map((q, i) =>
+            '<tr class="row-link" data-pq="' + i + '"><td><strong>' + esc(q.name) + '</strong>' +
+            (q.isFunction ? ' <span class="pill pill-gray">функция</span>' : '') + '</td>' +
+            '<td>' + (q.sources.length
+                ? q.sources.map(s => '<span class="pill pill-teal" title="' + esc(s.detail) + '">' + (SRC_ICON[s.kind] || '•') + ' ' + esc(s.label) + '</span>').join(' ')
+                : '<span class="muted">производный</span>') + '</td>' +
+            '<td class="num-cell">' + q.steps.length + '</td>' +
+            '<td>' + (q.refs.length ? esc(q.refs.join(', ')) : '<span class="muted">—</span>') + '</td>' +
+            '<td>' + (q.loadedTo.length
+                ? q.loadedTo.map(t => '<span class="pill pill-green">' + esc(t) + '</span>').join(' ')
+                : '<span class="pill pill-amber">только подключение</span>') + '</td></tr>').join('') +
+        '</tbody></table></div></div>' +
+        all.map((q, i) =>
+            '<div class="card" id="pq-card-' + i + '">' +
+            '<div class="card-title">' + esc(q.name) +
+            (APP.books.length > 1 ? ' <span class="hint">' + esc(q.book) + '</span>' : '') +
+            ' <button class="btn btn-outline btn-sm" data-focus-node="q:' + q.bi + ':' + esc(q.name) + '" style="margin-left:auto">В графе →</button></div>' +
+            (q.sources.length ? '<div style="margin-bottom:11px">' + q.sources.map(s =>
+                '<div style="font-size:12.5px;margin-bottom:3px">' + (SRC_ICON[s.kind] || '•') + ' <strong>' + esc(s.label) + ':</strong> ' +
+                '<span class="mono" style="overflow-wrap:anywhere">' + esc(s.detail) + '</span></div>').join('') + '</div>' : '') +
+            (q.steps.length
+                ? '<div class="pq-steps">' + q.steps.map((s, n) =>
+                    '<div class="pq-step' + (s.sources.length ? ' is-source' : '') + '">' +
+                    '<div class="pq-step-num">' + (n + 1) + '</div><div style="min-width:0">' +
+                    '<div class="pq-step-name">' + esc(s.name) + '</div>' +
+                    (s.comment ? '<div class="pq-step-note">' + esc(s.comment) + '</div>' : '') +
+                    '<div class="pq-step-expr">' + esc(s.expr.length > 320 ? s.expr.slice(0, 320) + ' …' : s.expr) + '</div>' +
+                    '</div></div>').join('') + '</div>'
+                : '<div class="muted" style="margin-bottom:10px">Запрос не в форме let/in — смотрите код целиком.</div>') +
+            '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--text-secondary)">Показать M-код целиком</summary>' +
+            '<div class="code-box" style="margin-top:9px">' + highlightM(q.code) + '</div></details>' +
+            '</div>').join('');
+}
+
+/* ─────────────── МОДЕЛЬ ДАННЫХ ─────────────── */
+
+function renderModel() {
+    const parts = [];
+    APP.books.forEach(b => {
+        const m = b.model || { present: false, measures: [], tables: [] };
+        parts.push('<div class="card"><div class="card-title">' + esc(b.fileName) + '</div>');
+
+        if (!m.present) {
+            parts.push('<div class="empty-state">Модель данных Power Pivot в этой книге не используется.</div></div>');
+            return;
+        }
+
+        parts.push(
+            '<div style="margin-bottom:14px">' +
+            '<span class="confidence partial"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>' +
+            'частичные данные — ограничение формата</span></div>' +
+            '<div class="issue-why" style="margin-bottom:16px">' +
+            'Модель данных хранится в <span class="mono">' + esc(b.modelRaw || 'xl/model/item.data') + '</span> (' + fmtBytes(m.rawSize) + ') — ' +
+            'это двоичный дамп движка xVelocity, а не XML. <strong>Выражения DAX и связи между таблицами оттуда в браузере ' +
+            'достать нельзя</strong>, и это ограничение формата, а не инструмента.<br><br>' +
+            'Ниже — то, что <strong>достоверно</strong> извлекается из кешей сводных таблиц: имена мер и полей, которые ' +
+            'реально используются в отчётах книги. Чтобы увидеть модель целиком (DAX, связи, направления фильтрации), ' +
+            'выгрузите её из самого Excel: <span class="mono">Power Pivot → Управление → Конструктор</span> или DAX Studio. ' +
+            'Импорт такой выгрузки — в планах следующей версии.</div>');
+
+        parts.push('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">');
+
+        parts.push('<div><h4 style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:8px">' +
+            'Таблицы модели (' + m.tables.length + ')</h4>' +
+            (m.tables.length ? '<div class="table-box"><table><thead><tr><th>Таблица</th><th>Используемые поля</th></tr></thead><tbody>' +
+                m.tables.map(t => '<tr><td><strong>' + esc(t.name) + '</strong></td><td class="muted" style="font-size:11.5px">' +
+                    esc(t.columns.slice(0, 10).join(', ')) + (t.columns.length > 10 ? '…' : '') + '</td></tr>').join('') +
+                '</tbody></table></div>'
+                : '<div class="empty-state">Ни одна сводная не обращается к таблицам модели.</div>') + '</div>');
+
+        parts.push('<div><h4 style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:8px">' +
+            'Меры (' + m.measures.length + ')</h4>' +
+            (m.measures.length ? '<div class="table-box"><table><thead><tr><th>Мера</th><th>Таблица</th></tr></thead><tbody>' +
+                m.measures.map(x => '<tr><td><strong>' + esc(x.name) + '</strong></td><td class="muted">' + esc(x.table || '—') + '</td></tr>').join('') +
+                '</tbody></table></div>'
+                : '<div class="empty-state">Мер, используемых в сводных, не найдено.</div>') + '</div>');
+
+        parts.push('</div></div>');
+    });
+
+    /* сводные таблицы — они есть и без модели данных */
+    const pivots = [];
+    APP.books.forEach(b => (b.pivots || []).forEach(p => {
+        const cache = (b.pivotCaches || []).find((c, i) => String(i + 1) === String(p.cacheId)) || (b.pivotCaches || [])[0];
+        pivots.push({ book: b.fileName, name: p.name, sheet: p.sheet, location: p.location,
+            src: cache ? (cache.sourceType === 'external' ? 'модель данных / внешнее подключение' : (cache.sheet ? 'лист ' + cache.sheet + (cache.ref ? ' (' + cache.ref + ')' : '') : '—')) : '—' });
+    }));
+    parts.push('<div class="card"><div class="card-title">Сводные таблицы</div>' +
+        (pivots.length ? '<div class="table-box"><table class="wide"><thead><tr><th>Сводная</th><th>Лежит на листе</th><th>Диапазон</th><th>Источник данных</th></tr></thead><tbody>' +
+            pivots.map(p => '<tr><td><strong>' + esc(p.name) + '</strong></td><td>' + esc(p.sheet || '—') + '</td>' +
+                '<td class="mono" style="font-size:11px">' + esc(p.location || '—') + '</td><td>' + esc(p.src) + '</td></tr>').join('') +
+            '</tbody></table></div>'
+            : '<div class="empty-state">Сводных таблиц в книге нет.</div>') + '</div>');
+
+    $('#model-content').innerHTML = parts.join('');
+}
+
+/* ─────────────── КАЧЕСТВО ─────────────── */
+
+let sevFilter = 'all';
+
+function renderQuality() {
+    const counts = { all: APP.issues.length };
+    Object.keys(SEV).forEach(s => counts[s] = APP.issues.filter(i => i.severity === s).length);
+    const totalFindings = APP.issues.reduce((a, i) => a + i.count, 0);
+    $('#quality-sub').textContent = APP.issues.length + ' правил сработало, ' + fmtNum(totalFindings) + ' находок';
+
+    $('#sev-filter').innerHTML =
+        '<button class="btn btn-sm ' + (sevFilter === 'all' ? '' : 'btn-outline') + '" data-sev="all">Все (' + counts.all + ')</button>' +
+        Object.entries(SEV).map(([k, v]) =>
+            '<button class="btn btn-sm ' + (sevFilter === k ? '' : 'btn-outline') + '" data-sev="' + k + '"' +
+            (sevFilter === k ? ' style="background:' + v.color + '"' : '') + '>' + v.label + ' (' + counts[k] + ')</button>').join('');
+
+    const list = APP.issues.filter(i => sevFilter === 'all' || i.severity === sevFilter);
+    $('#quality-list').innerHTML = list.length ? list.map((iss, n) =>
+        '<div class="issue" style="--sev-color:' + SEV[iss.severity].color + '" data-issue="' + n + '">' +
+        '<div class="issue-head">' +
+        '<span class="issue-icon">' + (iss.severity === 'critical'
+            ? '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16h.01"/></svg>'
+            : iss.severity === 'major'
+            ? '<svg viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>'
+            : '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/></svg>') + '</span>' +
+        '<span class="issue-main"><span class="issue-title">' + esc(iss.title) + '</span>' +
+        '<span class="issue-desc">' + esc(iss.desc) + '</span></span>' +
+        '<span class="issue-count">' + fmtNum(iss.count) + '</span>' +
+        '<span class="issue-chevron"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span>' +
+        '</div>' +
+        '<div class="issue-body">' +
+        '<div class="issue-why">' + iss.why + '</div>' +
+        (iss.items.length ? '<div class="issue-items">' + iss.items.map(it =>
+            '<div class="issue-item"><span class="ii-loc">' + esc(it.loc) + '</span><span class="ii-txt">' + esc(it.txt) + '</span></div>').join('') +
+            '</div>' + (iss.count > iss.items.length ? '<div class="muted" style="margin-top:7px;font-size:11.5px">показаны первые ' + iss.items.length + ' из ' + fmtNum(iss.count) + '</div>' : '')
+            : '') +
+        '</div></div>').join('')
+        : '<div class="card"><div class="empty-state">По этому уровню важности находок нет.</div></div>';
+}
+
+/* ─────────────── ОТЧЁТ ─────────────── */
+
+function buildMarkdown() {
+    const L = [];
+    L.push('# Паспорт книги Excel');
+    L.push('');
+    L.push('_Сформировано XLS Explorer v0.1.0 · ' + new Date().toLocaleString('ru-RU') + '_');
+    L.push('');
+    L.push('Индекс здоровья: **' + APP.health.total + ' / 100**');
+    L.push('');
+    APP.health.cats.forEach(c => L.push('- ' + c + ': ' + APP.health.scores[c]));
+    L.push('');
+
+    APP.books.forEach(b => {
+        const p = b.props || {};
+        L.push('## ' + b.fileName);
+        L.push('');
+        L.push('| Параметр | Значение |');
+        L.push('|---|---|');
+        L.push('| Формат | ' + b.format + ' |');
+        L.push('| Размер | ' + fmtBytes(b.size) + ' |');
+        if (p.creator) L.push('| Автор | ' + p.creator + ' |');
+        if (p.lastModifiedBy) L.push('| Последний правил | ' + p.lastModifiedBy + ' |');
+        if (p.modified) L.push('| Изменён | ' + fmtDate(p.modified) + ' |');
+        L.push('| Режим пересчёта | ' + b.calc.mode + ' |');
+        L.push('| Макросы VBA | ' + (b.vba ? 'есть' : 'нет') + ' |');
+        L.push('| Модель данных | ' + (b.model && b.model.present ? 'есть' : 'нет') + ' |');
+        L.push('');
+
+        L.push('### Листы');
+        L.push('');
+        L.push('| Лист | Статус | Роль | Формул | Констант | Ошибок |');
+        L.push('|---|---|---|---:|---:|---:|');
+        b.sheets.forEach(s => L.push('| ' + s.name + ' | ' + s.state + ' | ' + (s.role || '—') + ' | ' +
+            (s.formulaCount || 0) + ' | ' + (s.constCount || 0) + ' | ' + (s.errorCount || 0) + ' |'));
+        L.push('');
+
+        if ((b.tables || []).length) {
+            L.push('### Умные таблицы');
+            L.push('');
+            L.push('| Таблица | Лист | Диапазон | Источник |');
+            L.push('|---|---|---|---|');
+            b.tables.forEach(t => L.push('| ' + t.name + ' | ' + (t.sheet || '—') + ' | ' + (t.ref || '—') + ' | ' +
+                (t.tableType === 'queryTable' ? 'Power Query' : 'лист') + ' |'));
+            L.push('');
+        }
+
+        if ((b.queries || []).length) {
+            L.push('### Запросы Power Query');
+            L.push('');
+            b.queries.forEach(q => {
+                L.push('#### ' + q.name);
+                L.push('');
+                if (q.sources.length) L.push('Источники: ' + q.sources.map(s => s.label + ' — `' + s.detail + '`').join('; '));
+                L.push('Загружается в: ' + (q.loadedTo.length ? q.loadedTo.join(', ') : 'только подключение'));
+                if (q.refs.length) L.push('Использует запросы: ' + q.refs.join(', '));
+                L.push('');
+                L.push('```m');
+                L.push(q.code);
+                L.push('```');
+                L.push('');
+            });
+        }
+
+        if ((b.externalLinks || []).length) {
+            L.push('### Внешние связи');
+            L.push('');
+            b.externalLinks.forEach(x => L.push('- `' + x.index + '` ' + x.path + (x.usedBy.length ? ' — используется на: ' + x.usedBy.join(', ') : ' — не используется')));
+            L.push('');
+        }
+    });
+
+    L.push('## Находки аудита');
+    L.push('');
+    APP.issues.forEach(i => {
+        L.push('### [' + SEV[i.severity].label + '] ' + i.title + ' — ' + i.count);
+        L.push('');
+        L.push(i.desc);
+        L.push('');
+        L.push('> ' + i.why.replace(/<[^>]+>/g, ''));
+        L.push('');
+        i.items.slice(0, 25).forEach(it => L.push('- `' + it.loc + '` ' + it.txt));
+        if (i.count > 25) L.push('- … и ещё ' + (i.count - 25));
+        L.push('');
+    });
+
+    return L.join('\n');
+}
+
+function renderReport() {
+    const md = buildMarkdown();
+    const preview = md.length > 12000 ? md.slice(0, 12000) + '\n\n… (полный текст — в выгруженном файле)' : md;
+    $('#report-preview').textContent = preview;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ГРАФ: ОТРИСОВКА
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * INDIRECT("Лист1!A1") — ссылка, которую статический разбор формально не видит.
+ * Но если внутри строкового литерала стоит имя реального листа, связь всё же
+ * можно восстановить. Рисуем её отдельным красным пунктиром: это догадка,
+ * а не факт, и пользователь должен видеть разницу.
+ */
+function deriveInvisibleEdges(graph, books) {
+    books.forEach((book, bi) => {
+        const names = new Map(book.sheets.map(s => [s.name, 's:' + bi + ':' + s.name]));
+        book.sheets.forEach(sh => {
+            const from = 's:' + bi + ':' + sh.name;
+            (sh.invisible || []).forEach(item => {
+                const strings = item.f.match(/"([^"]*)"/g) || [];
+                strings.forEach(raw => {
+                    const lit = raw.slice(1, -1);
+                    names.forEach((id, nm) => {
+                        if (id === from) return;
+                        if (lit === nm || lit.startsWith(nm + '!') || lit.indexOf("'" + nm + "'!") !== -1) {
+                            const eid = 'invisible|' + id + '|' + from;
+                            let e = graph.edges.find(x => x.id === eid);
+                            if (e) { e.count++; return; }
+                            graph.edges.push({ id: eid, source: id, target: from, type: 'invisible', count: 1, guess: true });
+                        }
+                    });
+                });
+            });
+        });
+    });
+}
+
+function cyElements() {
+    const groups = $('#opt-groups').checked && APP.books.length > 1;
+    const showOrphans = $('#opt-orphans').checked;
+    const showInvisible = $('#opt-invisible').checked;
+
+    const edges = APP.graph.edges.filter(e => showInvisible || e.type !== 'invisible');
+    const deg = new Map();
+    edges.forEach(e => { deg.set(e.source, (deg.get(e.source) || 0) + 1); deg.set(e.target, (deg.get(e.target) || 0) + 1); });
+
+    const nodes = APP.graph.nodes.filter(n => {
+        if (n.isParent) return groups;
+        if (!showOrphans && !deg.get(n.id)) return false;
+        return true;
+    });
+    const present = new Set(nodes.map(n => n.id));
+
+    return [
+        ...nodes.map(n => ({
+            data: {
+                id: n.id, label: n.label, type: n.type,
+                parent: groups && n.parent && present.has(n.parent) ? n.parent : undefined,
+                color: (NODE_TYPES[n.type] || {}).color || '#64748b',
+                shape: (NODE_TYPES[n.type] || {}).shape || 'ellipse',
+                warn: (n.type === 'sheet' && n.ref && n.ref.errorCount > 0) ||
+                      (n.type === 'name' && n.ref && n.ref.broken) ||
+                      (n.type === 'extbook' && n.ref && n.ref.local) ? 1 : 0,
+                hidden: n.type === 'sheet' && n.state && n.state !== 'visible' ? 1 : 0,
+            },
+            classes: n.isParent ? 'parent' : '',
+        })),
+        ...edges.filter(e => present.has(e.source) && present.has(e.target)).map(e => ({
+            data: { id: e.id, source: e.source, target: e.target, type: e.type, count: e.count,
+                    label: e.count > 1 ? String(e.count) : '' },
+        })),
+    ];
+}
+
+const LAYOUTS = {
+    'dagre-lr': { name: 'dagre', rankDir: 'LR', nodeSep: 26, rankSep: 92, edgeSep: 12, animate: false, fit: true, padding: 40 },
+    'dagre-tb': { name: 'dagre', rankDir: 'TB', nodeSep: 26, rankSep: 76, edgeSep: 12, animate: false, fit: true, padding: 40 },
+    'cose':     { name: 'cose', animate: false, fit: true, padding: 40, nodeRepulsion: 9000, idealEdgeLength: 90, nestingFactor: 1.1 },
+};
+let currentLayout = 'dagre-lr';
+
+function renderGraph() {
+    const holder = $('#cy');
+    if (!window.cytoscape) {
+        $('#graph-empty').hidden = false;
+        $('#graph-empty').textContent = 'Не удалось загрузить библиотеку графа (cytoscape). Проверьте доступ к cdn.jsdelivr.net.';
+        return;
+    }
+    if (window.cytoscapeDagre && !window.__dagreRegistered) {
+        try { cytoscape.use(window.cytoscapeDagre); window.__dagreRegistered = true; }
+        catch (e) { console.warn('dagre не зарегистрирован', e); }
+    }
+    if (!window.__dagreRegistered && currentLayout.startsWith('dagre')) currentLayout = 'cose';
+
+    if (window.__cy) { window.__cy.destroy(); window.__cy = null; }
+
+    const els = cyElements();
+    $('#graph-empty').hidden = els.length > 0;
+    if (!els.length) { $('#graph-empty').textContent = 'Нечего показывать: все объекты отфильтрованы.'; return; }
+
+    const cy = cytoscape({
+        container: holder,
+        elements: els,
+        wheelSensitivity: 0.25,
+        style: [
+            { selector: 'node', style: {
+                'background-color': 'data(color)', 'shape': 'data(shape)',
+                'label': 'data(label)', 'color': '#0f172a',
+                'font-family': 'Manrope, sans-serif', 'font-size': 11, 'font-weight': 600,
+                'text-valign': 'bottom', 'text-margin-y': 5, 'text-wrap': 'ellipsis',
+                'text-max-width': 116, 'width': 26, 'height': 26,
+                'border-width': 2, 'border-color': '#fff',
+                'text-background-color': '#fff', 'text-background-opacity': .8,
+                'text-background-padding': 2, 'text-background-shape': 'roundrectangle',
+                'transition-property': 'opacity, border-color', 'transition-duration': '160ms',
+            }},
+            { selector: 'node[warn = 1]',   style: { 'border-color': '#dc2626', 'border-width': 3 } },
+            { selector: 'node[hidden = 1]', style: { 'border-style': 'dashed', 'border-color': '#94a3b8', 'opacity': .78 } },
+            { selector: 'node[type = "sheet"]',  style: { 'width': 34, 'height': 26 } },
+            { selector: 'node[type = "source"]', style: { 'width': 30, 'height': 30 } },
+            { selector: 'node.parent', style: {
+                'background-color': '#f1f5f9', 'background-opacity': .55, 'border-color': '#cbd5e1',
+                'border-width': 1.5, 'shape': 'round-rectangle', 'text-valign': 'top',
+                'font-size': 12, 'font-weight': 800, 'color': '#475569', 'padding': 16,
+            }},
+            { selector: 'edge', style: {
+                'width': 'mapData(count, 1, 60, 1.2, 5)',
+                'line-color': '#cbd5e1', 'target-arrow-color': '#cbd5e1',
+                'target-arrow-shape': 'triangle', 'arrow-scale': .85,
+                'curve-style': 'bezier', 'label': 'data(label)',
+                'font-size': 9, 'color': '#94a3b8', 'text-rotation': 'autorotate',
+                'text-background-color': '#fff', 'text-background-opacity': .9, 'text-background-padding': 1,
+                'transition-property': 'opacity, line-color', 'transition-duration': '160ms',
+            }},
+            { selector: 'edge[type = "load"], edge[type = "feed"], edge[type = "src"], edge[type = "pivot"], edge[type = "ext"]',
+              style: { 'line-style': 'dashed', 'line-dash-pattern': [6, 3] } },
+            { selector: 'edge[type = "contains"]', style: { 'line-color': '#e2e8f0', 'target-arrow-shape': 'none', 'line-style': 'dotted' } },
+            { selector: 'edge[type = "invisible"]', style: { 'line-color': '#ef4444', 'target-arrow-color': '#ef4444', 'line-style': 'dashed', 'opacity': .85 } },
+            { selector: '.faded', style: { 'opacity': .12, 'text-opacity': .05 } },
+            { selector: '.hl-node', style: { 'border-color': '#0f172a', 'border-width': 3.5 } },
+            { selector: '.hl-up',   style: { 'line-color': '#0d9488', 'target-arrow-color': '#0d9488', 'opacity': 1, 'width': 3 } },
+            { selector: '.hl-down', style: { 'line-color': '#db2777', 'target-arrow-color': '#db2777', 'opacity': 1, 'width': 3 } },
+        ],
+        layout: LAYOUTS[currentLayout],
+    });
+
+    window.__cy = cy;
+    cy.on('tap', 'node', evt => focusNode(evt.target.id()));
+    cy.on('tap', evt => { if (evt.target === cy) clearFocus(); });
+
+    buildLegend();
+}
+
+/** Режим фокуса: подсвечиваем всё, откуда узел берёт данные, и всё, что от него зависит. */
+function focusNode(id) {
+    const cy = window.__cy;
+    if (!cy) return;
+    const node = cy.getElementById(id);
+    if (!node || !node.length) return;
+
+    cy.elements().addClass('faded').removeClass('hl-node hl-up hl-down');
+
+    const up = new Set(), down = new Set(), upE = [], downE = [];
+    const walk = (start, dir, seen, edgeAcc) => {
+        const stack = [start];
+        while (stack.length) {
+            const cur = stack.pop();
+            const edges = dir === 'up' ? cy.getElementById(cur).incomers('edge') : cy.getElementById(cur).outgoers('edge');
+            edges.forEach(e => {
+                edgeAcc.push(e);
+                const next = dir === 'up' ? e.source().id() : e.target().id();
+                if (!seen.has(next)) { seen.add(next); stack.push(next); }
+            });
+        }
+    };
+    walk(id, 'up', up, upE);
+    walk(id, 'down', down, downE);
+    up.delete(id); down.delete(id);   // цикл через имя/лист — не повод показывать узел самому себе
+
+    node.removeClass('faded').addClass('hl-node');
+    up.forEach(n => cy.getElementById(n).removeClass('faded'));
+    down.forEach(n => cy.getElementById(n).removeClass('faded'));
+    upE.forEach(e => e.removeClass('faded').addClass('hl-up'));
+    downE.forEach(e => e.removeClass('faded').addClass('hl-down'));
+
+    showNodeDetails(id, up, down);
+}
+
+function clearFocus() {
+    if (window.__cy) window.__cy.elements().removeClass('faded hl-node hl-up hl-down');
+    $('#graph-details').hidden = true;
+}
+
+function showNodeDetails(id, upSet, downSet) {
+    const n = APP.graph.index.get(id);
+    if (!n) return;
+    const type = NODE_TYPES[n.type] || { label: n.type, color: '#64748b' };
+
+    $('#graph-details').hidden = false;
+    $('#gd-title').innerHTML = '<span class="pill" style="background:' + type.color + '22;color:' + type.color + '">' +
+        esc(type.label) + '</span><br>' + esc(n.label);
+
+    const kv = [];
+    const r = n.ref || {};
+    if (n.type === 'sheet') {
+        kv.push(['Статус', n.state === 'visible' ? 'видимый' : n.state]);
+        kv.push(['Роль', n.role || '—']);
+        kv.push(['Формул', fmtNum(r.formulaCount)]);
+        kv.push(['Констант', fmtNum(r.constCount)]);
+        kv.push(['Ошибок', fmtNum(r.errorCount)]);
+        kv.push(['Диапазон', r.dimension || '—']);
+    } else if (n.type === 'table') {
+        kv.push(['Лист', r.sheet || '—']);
+        kv.push(['Диапазон', r.ref || '—']);
+        kv.push(['Колонок', (r.columns || []).length]);
+        kv.push(['Источник', r.tableType === 'queryTable' ? 'Power Query' : 'лист']);
+    } else if (n.type === 'query') {
+        kv.push(['Шагов', (r.steps || []).length]);
+        kv.push(['Загружается в', (r.loadedTo || []).join(', ') || 'только подключение']);
+        if (r.isFunction) kv.push(['Тип', 'функция']);
+    } else if (n.type === 'source') {
+        kv.push(['Тип', n.srcLabel || '—']);
+        kv.push(['Адрес', n.fullPath || '—']);
+    } else if (n.type === 'extbook') {
+        kv.push(['Путь', n.fullPath || '—']);
+        kv.push(['Использований', fmtNum(r.uses)]);
+    } else if (n.type === 'name') {
+        kv.push(['Область', r.scope || '—']);
+        kv.push(['Ссылается на', r.ref || '—']);
+        kv.push(['Использований', fmtNum(r.uses)]);
+    } else if (n.type === 'pivot') {
+        kv.push(['Лист', r.sheet || '—']);
+        kv.push(['Диапазон', r.location || '—']);
+    }
+
+    const nm = x => (APP.graph.index.get(x) || {}).label || x;
+    const linkList = (ids, empty) => ids.size
+        ? '<div class="gd-link-list">' + Array.from(ids).slice(0, 40).map(x =>
+            '<div class="gd-link" data-focus-node="' + esc(x) + '">' +
+            '<span class="lg-swatch" style="background:' + ((NODE_TYPES[(APP.graph.index.get(x) || {}).type] || {}).color || '#94a3b8') + '"></span>' +
+            '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis">' + esc(nm(x)) + '</span></div>').join('') +
+          (ids.size > 40 ? '<div class="muted" style="font-size:11px;padding:4px 8px">…и ещё ' + (ids.size - 40) + '</div>' : '') + '</div>'
+        : '<div class="gd-empty">' + empty + '</div>';
+
+    let extra = '';
+    if (n.type === 'query' && (r.code || '').length) {
+        extra = '<div class="gd-section"><h4>M-код</h4><div class="code-box" style="max-height:220px;overflow:auto;font-size:11px">' +
+            highlightM(r.code.slice(0, 1800)) + (r.code.length > 1800 ? '\n…' : '') + '</div></div>';
+    }
+    if (n.type === 'sheet' && (r.invisible || []).length) {
+        extra += '<div class="gd-section"><h4 style="color:#dc2626">Невидимые связи</h4>' +
+            '<div class="gd-empty" style="color:#b91c1c;font-style:normal">' + r.invisible.length +
+            ' формул с INDIRECT/OFFSET — их зависимости не видны статическому анализу.</div></div>';
+    }
+
+    $('#gd-body').innerHTML =
+        (kv.length ? '<div class="gd-section"><h4>Свойства</h4><dl class="gd-kv">' +
+            kv.map(x => '<dt>' + esc(x[0]) + '</dt><dd>' + esc(x[1]) + '</dd>').join('') + '</dl></div>' : '') +
+        '<div class="gd-section"><h4>Берёт данные из (' + upSet.size + ')</h4>' + linkList(upSet, 'Ни от чего не зависит — это источник.') + '</div>' +
+        '<div class="gd-section"><h4>Влияет на (' + downSet.size + ')</h4>' + linkList(downSet, 'Ничего от него не зависит — тупик.') + '</div>' +
+        (downSet.size ? '<div class="gd-section"><h4>Анализ влияния</h4><div class="issue-why" style="margin:0">' +
+            'Если удалить этот объект, пострадает <strong>' + downSet.size + '</strong> ' +
+            'связанных объектов вниз по цепочке.</div></div>' : '') +
+        extra;
+}
+
+function buildLegend() {
+    const used = new Set(APP.graph.nodes.map(n => n.type));
+    $('#lg-items').innerHTML = Object.entries(NODE_TYPES)
+        .filter(([k]) => used.has(k) && k !== 'book')
+        .map(([, v]) => '<span class="lg-item"><span class="lg-swatch" style="background:' + v.color + '"></span>' + esc(v.label) + '</span>')
+        .join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   СОБЫТИЯ И ЗАПУСК
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const CAPABILITIES = [
+    ['Листы, скрытые и veryHidden',      'full', 'full', 'part'],
+    ['Умные таблицы (ListObject)',       'full', 'full', 'none'],
+    ['Именованные диапазоны',            'full', 'full', 'part'],
+    ['Формулы и их ссылки',              'full', 'part', 'part'],
+    ['Внешние ссылки на другие книги',   'full', 'full', 'part'],
+    ['Power Query: полный M-код',        'full', 'full', 'none'],
+    ['Подключения и куда грузится запрос','full', 'part', 'none'],
+    ['Сводные таблицы и их источники',   'full', 'part', 'part'],
+    ['Power Pivot: имена мер',           'part', 'part', 'none'],
+    ['Power Pivot: выражения DAX и связи','none', 'none', 'none'],
+    ['Наличие макросов VBA',             'full', 'full', 'part'],
+];
+const CAP_PILL = {
+    full: '<span class="pill pill-green"><span class="pill-dot"></span>полностью</span>',
+    part: '<span class="pill pill-amber"><span class="pill-dot"></span>частично</span>',
+    none: '<span class="pill pill-red"><span class="pill-dot"></span>нет</span>',
+};
+
+function renderCapabilities() {
+    $('#capability-table').innerHTML = CAPABILITIES.map(r =>
+        '<tr><td style="font-weight:600">' + esc(r[0]) + '</td><td>' + CAP_PILL[r[1]] + '</td>' +
+        '<td>' + CAP_PILL[r[2]] + '</td><td>' + CAP_PILL[r[3]] + '</td></tr>').join('');
+}
+
+function initEvents() {
+    /* сайдбар */
+    $$('.nav-item').forEach(b => b.addEventListener('click', () => { if (!b.disabled) goPage(b.dataset.page); }));
+    $('#mobile-menu-btn').onclick   = () => { $('#sidebar').classList.add('open'); $('#overlay').classList.add('open'); };
+    $('#sidebar-close-btn').onclick = () => { $('#sidebar').classList.remove('open'); $('#overlay').classList.remove('open'); };
+    $('#overlay').onclick           = () => { $('#sidebar').classList.remove('open'); $('#overlay').classList.remove('open'); };
+    $('#sidebar-collapse-btn').onclick = () => {
+        document.body.classList.toggle('sidebar-collapsed');
+        if (window.__cy) setTimeout(() => window.__cy.resize(), 320);
+    };
+
+    /* загрузка файлов */
+    const dz = $('#dropzone'), fi = $('#file-input');
+    dz.onclick = () => fi.click();
+    dz.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fi.click(); } };
+    fi.onchange = e => { if (e.target.files.length) loadFiles(e.target.files); fi.value = ''; };
+    ['dragenter', 'dragover'].forEach(t => dz.addEventListener(t, e => { e.preventDefault(); dz.classList.add('dragover'); }));
+    ['dragleave', 'drop'].forEach(t => dz.addEventListener(t, e => { e.preventDefault(); dz.classList.remove('dragover'); }));
+    dz.addEventListener('drop', e => { if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files); });
+    // Файл, случайно брошенный мимо зоны, не должен открываться в браузере поверх приложения
+    window.addEventListener('dragover', e => e.preventDefault());
+    window.addEventListener('drop', e => e.preventDefault());
+
+    /* делегирование кликов по всей странице */
+    document.addEventListener('click', e => {
+        const goto = e.target.closest('[data-goto]');
+        if (goto) { goPage(goto.dataset.goto); return; }
+
+        const focus = e.target.closest('[data-focus-node]');
+        if (focus) {
+            const id = focus.dataset.focusNode;
+            goPage('graph');
+            setTimeout(() => {
+                if (!window.__cy) return;
+                const n = window.__cy.getElementById(id);
+                if (n && n.length) { window.__cy.animate({ center: { eles: n }, zoom: 1.4 }, { duration: 320 }); focusNode(id); }
+                else showNotification('Этот объект скрыт текущими фильтрами графа', 'info', 4000);
+            }, 90);
+            return;
+        }
+
+        const row = e.target.closest('tr[data-sheet]');
+        if (row) { const [bi, name] = row.dataset.sheet.split('|'); showSheetDetail(+bi, name); return; }
+
+        const pq = e.target.closest('tr[data-pq]');
+        if (pq) { const c = $('#pq-card-' + pq.dataset.pq); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+
+        const iss = e.target.closest('.issue-head');
+        if (iss) { iss.parentElement.classList.toggle('open'); return; }
+
+        const sev = e.target.closest('[data-sev]');
+        if (sev) { sevFilter = sev.dataset.sev; renderQuality(); return; }
+
+        const th = e.target.closest('th.sortable');
+        if (th) {
+            const k = th.dataset.sort;
+            sheetSort = { key: k, dir: sheetSort.key === k ? -sheetSort.dir : (typeof sheetRows()[0] || {})[k] === 'number' ? -1 : 1 };
+            $$('#sheets-table th.sortable').forEach(x => x.classList.remove('asc', 'desc'));
+            th.classList.add(sheetSort.dir > 0 ? 'asc' : 'desc');
+            renderSheets();
+            return;
+        }
+    });
+
+    /* граф: панель, раскладки, фильтры */
+    $('#gd-close').onclick = clearFocus;
+    $('#lg-toggle').onclick = () => $('#graph-legend').classList.toggle('collapsed');
+    $$('.seg [data-layout]').forEach(b => b.onclick = () => {
+        $$('.seg [data-layout]').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        currentLayout = b.dataset.layout;
+        if (window.__cy) window.__cy.layout(LAYOUTS[currentLayout]).run();
+    });
+    ['#opt-groups', '#opt-orphans', '#opt-invisible'].forEach(sel => { $(sel).onchange = renderGraph; });
+    $('#btn-graph-fit').onclick   = () => { if (window.__cy) window.__cy.fit(undefined, 40); };
+    $('#btn-graph-reset').onclick = () => { clearFocus(); if (window.__cy) window.__cy.layout(LAYOUTS[currentLayout]).run(); };
+    $('#btn-graph-png').onclick   = () => {
+        if (!window.__cy) return;
+        const uri = window.__cy.png({ full: true, scale: 2, bg: '#ffffff' });
+        const a = document.createElement('a');
+        a.href = uri; a.download = 'xls-explorer-graph.png';
+        document.body.appendChild(a); a.click(); a.remove();
+    };
+
+    /* поиск по графу */
+    const si = $('#graph-search-input'), sl = $('#graph-search-list');
+    si.oninput = () => {
+        const q = si.value.trim().toLowerCase();
+        if (!q) { sl.hidden = true; return; }
+        const hits = APP.graph.nodes.filter(n => !n.isParent && n.label.toLowerCase().indexOf(q) !== -1).slice(0, 20);
+        sl.innerHTML = hits.length
+            ? hits.map(n => '<div class="gs-opt" data-focus-node="' + esc(n.id) + '">' +
+                '<span class="lg-swatch" style="background:' + ((NODE_TYPES[n.type] || {}).color || '#94a3b8') + '"></span>' +
+                esc(n.label) + '<span class="gs-type">' + esc((NODE_TYPES[n.type] || {}).label || n.type) + '</span></div>').join('')
+            : '<div class="combo-empty" style="padding:12px;text-align:center;color:var(--text-muted);font-size:12px">Ничего не найдено</div>';
+        sl.hidden = false;
+    };
+    si.onblur = () => setTimeout(() => { sl.hidden = true; }, 180);
+
+    /* экспорт */
+    $('#btn-export-md').onclick = () => download('xls-explorer-passport.md', buildMarkdown(), 'text/markdown');
+    $('#btn-export-json').onclick = () => download('xls-explorer-graph.json', JSON.stringify({
+        generated: new Date().toISOString(),
+        books: APP.books.map(b => ({ file: b.fileName, format: b.format, size: b.size, sheets: b.sheets.length })),
+        nodes: APP.graph.nodes.map(n => ({ id: n.id, type: n.type, label: n.label, role: n.role || null })),
+        edges: APP.graph.edges.map(e => ({ from: e.source, to: e.target, type: e.type, count: e.count, guess: !!e.guess })),
+        health: APP.health,
+    }, null, 2), 'application/json');
+    $('#btn-export-csv').onclick = () => {
+        const rows = [['Важность', 'Категория', 'Правило', 'Объект', 'Подробности']];
+        APP.issues.forEach(i => i.items.forEach(it => rows.push([SEV[i.severity].label, i.category, i.title, it.loc, it.txt])));
+        const csv = '﻿' + rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+        download('xls-explorer-findings.csv', csv, 'text/csv');
+    };
+    $('#btn-export-m').onclick = () => {
+        const parts = [];
+        APP.books.forEach(b => (b.queries || []).forEach(q => { parts.push('// ═══ ' + q.name + ' ═══'); parts.push(q.code + ';'); parts.push(''); }));
+        download('power-query.m', parts.join('\n'), 'text/plain');
+    };
+
+    /* горячие клавиши */
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { clearFocus(); $('#graph-search-list').hidden = true; }
+        if (e.key === '/' && document.activeElement.tagName !== 'INPUT') {
+            const gp = $('#page-graph');
+            if (gp.classList.contains('active')) { e.preventDefault(); si.focus(); }
+        }
+    });
+}
+
+/* ─── старт ─── */
+renderCapabilities();
+initEvents();
+if (!window.fflate)   showNotification('Не загрузилась библиотека fflate — разбор .xlsx работать не будет. Проверьте доступ к cdn.jsdelivr.net.', 'error', 0);
+if (!window.cytoscape) showNotification('Не загрузилась библиотека cytoscape — граф не отрисуется.', 'error', 0);
+
+</script>
+</body>
+</html>
