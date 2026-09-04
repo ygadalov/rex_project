@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.1.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.1.2 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -455,8 +455,12 @@ tr.row-link { cursor: pointer; }
 .lg-edge:hover { background: var(--border-light); }
 .lg-edge.off { opacity: .38; }
 .lg-edge.off .lg-edge-name { text-decoration: line-through; }
-.lg-line { width: 26px; flex-shrink: 0; margin-top: 6px; height: 0; border-top-width: 2px; }
-.lg-arrow { font-size: 9px; margin-left: -4px; margin-top: 1px; flex-shrink: 0; }
+/* Общий образец связи. Светлый подслой нужен для бледных линий вроде
+   «лежит на листе»: цвет остаётся честным, но на белом фоне остаётся виден. */
+.edge-sample {
+    flex-shrink: 0; display: block; margin-top: 3px;
+    background: #f1f5f9; border-radius: 3px; padding: 1px 2px; box-sizing: content-box;
+}
 .lg-edge-body { min-width: 0; flex: 1; }
 .lg-edge-name { display: block; }
 .lg-edge-hint { display: none; font-weight: 500; font-size: 10.5px; line-height: 1.45; color: var(--text-muted); margin-top: 2px; }
@@ -483,7 +487,8 @@ tr.row-link { cursor: pointer; }
     box-shadow: 0 2px 8px rgba(15,23,42,.12);
     transform: translate(-50%, calc(-100% - 12px));
 }
-.cy-tip .tip-line { display: inline-block; width: 14px; border-top-width: 2px; vertical-align: middle; margin-right: 5px; }
+.cy-tip { display: flex; align-items: center; gap: 6px; }
+.cy-tip .edge-sample { margin-top: 0; }
 .cy-tip .tip-num { color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 10.5px; margin-left: 4px; }
 
 /* Панель деталей узла */
@@ -1096,7 +1101,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.1.2';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3894,7 +3899,7 @@ function renderGraph() {
         const v = EDGE_TYPES[t] || { label: t, color: '#94a3b8', dash: 'solid' };
         const cnt = e.data('count') || 1;
         showTip(evt.renderedPosition || e.midpoint(),
-            '<span class="tip-line" style="border-top-style:' + v.dash + ';border-top-color:' + v.color + '"></span>' +
+            edgeSample(v, 26) +
             esc(v.label) + (cnt > 1 ? '<span class="tip-num">×' + fmtNum(cnt) + '</span>' : ''));
         e.addClass('edge-hl');
     });
@@ -4148,6 +4153,31 @@ function buildTypeFilter(reset) {
  * может не показать ни одной связи: именованные диапазоны, например, связаны
  * только с листами, и без листов висят одинокими точками.
  */
+/**
+ * Образец связи для легенды и подсказки.
+ *
+ * Раньше это был span с border-top нужного цвета и стиля. На ширине 14 px
+ * в штриховую линию помещалось полтора штриха: браузер их сглаживал, цвет
+ * размывался в белый фон, и одинаковые по коду линии выглядели то бледными,
+ * то другого оттенка. Точечная в светло-сером не читалась вовсе.
+ *
+ * SVG решает это: длина, толщина и рисунок штриха заданы явно и не зависят
+ * от того, как браузер округлит бордюр. Легенда и подсказка зовут одну
+ * функцию, поэтому выглядят одинаково по построению.
+ */
+function edgeSample(v, w) {
+    w = w || 30;
+    const arrow = v.arrow !== false;
+    const lineEnd = arrow ? w - 6 : w;
+    const dash = v.dash === 'dashed' ? '5,3.5' : v.dash === 'dotted' ? '0.1,3.6' : null;
+    return '<svg class="edge-sample" width="' + w + '" height="9" viewBox="0 0 ' + w + ' 9" aria-hidden="true">' +
+        '<line x1="0" y1="4.5" x2="' + lineEnd + '" y2="4.5" stroke="' + v.color + '" stroke-width="2.4"' +
+        (dash ? ' stroke-dasharray="' + dash + '"' : '') +
+        (v.dash === 'dotted' ? ' stroke-linecap="round"' : '') + '/>' +
+        (arrow ? '<path d="M' + lineEnd + ' 0.6 L' + w + ' 4.5 L' + lineEnd + ' 8.4 Z" fill="' + v.color + '"/>' : '') +
+        '</svg>';
+}
+
 function typeNeighbours() {
     const map = new Map();
     const add = (a, b) => {
@@ -4181,8 +4211,7 @@ function buildLegend() {
             const off = !APP.edgeFilter.has(t);
             return '<div class="lg-edge' + (off ? ' off' : '') + '" data-edge="' + t + '"' +
                 ' title="Клик — скрыть или показать эти связи">' +
-                '<span class="lg-line" style="border-top-style:' + v.dash + ';border-top-color:' + v.color + '"></span>' +
-                (v.arrow ? '<span class="lg-arrow" style="color:' + v.color + '">▶</span>' : '<span class="lg-arrow"></span>') +
+                edgeSample(v, 34) +
                 '<span class="lg-edge-body"><span class="lg-edge-name">' + esc(v.label) + '</span>' +
                 '<span class="lg-edge-hint">' + esc(v.hint) + '</span></span>' +
                 '<span class="lg-edge-num">' + fmtNum(counts[t]) + '</span></div>';
