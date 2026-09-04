@@ -963,6 +963,9 @@ table.matrix td.cell[data-n] { cursor: default; }
    Единая графовая модель принципиальна: иначе вкладки начнут расходиться в показаниях.
    ════════════════════════════════════════════════════════════════════════════ */
 
+/** Форматы, которые разбираются собственным парсером OOXML во всю глубину. */
+const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
+
 const APP = {
     books: [],          // разобранные книги
     graph: { nodes: [], edges: [] },
@@ -1001,6 +1004,12 @@ function unesc(s) {
 }
 
 const fmtNum = n => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString('ru-RU');
+
+/** У длинного пути значим хвост — имя файла, а не начало каталога. */
+function shortPath(p, max) {
+    const s = String(p == null ? '' : p);
+    return s.length <= max ? s : '…' + s.slice(s.length - max + 1);
+}
 
 function fmtBytes(b) {
     if (b < 1024) return b + ' Б';
@@ -1259,13 +1268,28 @@ const HEAT_MAX = 220;                    // размер тепловой кар
 const MAX_SHEET_SCAN = 40 * 1024 * 1024; // выше этого лист считаем по-крупному, без разбора ячеек
 
 const dec = new TextDecoder('utf-8');
+
+/**
+ * Части OOXML лежат в разных кодировках: листы Excel пишет в UTF-8, а customXml —
+ * в UTF-16LE с BOM. Если декодировать всё как UTF-8, контейнер DataMashup
+ * превращается в мусор и Power Query «пропадает» из книги.
+ */
+function decodePart(bytes) {
+    if (bytes.length >= 2) {
+        if (bytes[0] === 0xFF && bytes[1] === 0xFE) return new TextDecoder('utf-16le').decode(bytes);
+        if (bytes[0] === 0xFE && bytes[1] === 0xFF) return new TextDecoder('utf-16be').decode(bytes);
+    }
+    return dec.decode(bytes);
+}
 const xmlDoc = s => new DOMParser().parseFromString(s, 'application/xml');
 const els = (root, tag) => Array.from(root.getElementsByTagNameNS('*', tag));
 const relId = el => el.getAttributeNS(RELS_NS, 'id') || el.getAttribute('r:id');
 
 function detectFormat(bytes, name) {
     const ext = (name.split('.').pop() || '').toLowerCase();
-    if (bytes[0] === 0x50 && bytes[1] === 0x4B) return ext === 'xlsb' ? 'xlsb' : 'xlsx';  // PK — ZIP
+    if (bytes[0] === 0x50 && bytes[1] === 0x4B) {                                          // PK — ZIP
+        return ['xlsb', 'xlsm', 'xltx', 'xltm'].indexOf(ext) !== -1 ? ext : 'xlsx';
+    }
     if (bytes[0] === 0xD0 && bytes[1] === 0xCF) return 'xls';                              // OLE2
     return ext || 'unknown';
 }
@@ -1436,7 +1460,7 @@ async function parseOOXML(bytes, book, log) {
         throw new Error('Не удалось распаковать файл — возможно, он повреждён или защищён паролем.');
     }
     const has = p => Object.prototype.hasOwnProperty.call(zip, p);
-    const txt = p => has(p) ? dec.decode(zip[p]) : null;
+    const txt = p => has(p) ? decodePart(zip[p]) : null;
 
     book.zipEntries = Object.keys(zip).length;
     book.vba = has('xl/vbaProject.bin');
@@ -1463,7 +1487,7 @@ async function parseOOXML(bytes, book, log) {
     /* ── customXml → DataMashup: исходный M-код всех запросов Power Query */
     for (const path of Object.keys(zip)) {
         if (!/^customXml\/item\d*\.xml$/i.test(path)) continue;
-        const s = dec.decode(zip[path]);
+        const s = decodePart(zip[path]);
         const m = /<DataMashup[^>]*>([\s\S]*?)<\/DataMashup>/.exec(s);
         if (!m) continue;
         try {
@@ -1571,7 +1595,7 @@ async function parseOOXML(bytes, book, log) {
     book.tables = [];
     for (const path of Object.keys(zip)) {
         if (!/^xl\/tables\/table\d+\.xml$/.test(path)) continue;
-        const d = xmlDoc(dec.decode(zip[path]));
+        const d = xmlDoc(decodePart(zip[path]));
         const t = els(d, 'table')[0];
         if (!t) continue;
         const owner = book.sheets.find(s => (s.rels || []).some(r => r.target === path));
@@ -1613,7 +1637,7 @@ async function parseOOXML(bytes, book, log) {
     book.queryTables = [];
     for (const path of Object.keys(zip)) {
         if (!/^xl\/queryTables\/queryTable\d+\.xml$/.test(path)) continue;
-        const qt = els(xmlDoc(dec.decode(zip[path])), 'queryTable')[0];
+        const qt = els(xmlDoc(decodePart(zip[path])), 'queryTable')[0];
         if (!qt) continue;
         const owner = book.sheets.find(s => (s.rels || []).some(r => r.target === path));
         book.queryTables.push({ name: qt.getAttribute('name'), connectionId: qt.getAttribute('connectionId'), sheet: owner ? owner.name : null, path });
@@ -1624,7 +1648,7 @@ async function parseOOXML(bytes, book, log) {
     book.pivotCaches = [];
     for (const path of Object.keys(zip)) {
         if (/^xl\/pivotCache\/pivotCacheDefinition\d+\.xml$/.test(path)) {
-            const d = xmlDoc(dec.decode(zip[path]));
+            const d = xmlDoc(decodePart(zip[path]));
             const src = els(d, 'cacheSource')[0];
             const ws  = src ? els(src, 'worksheetSource')[0] : null;
             const hierarchies = els(d, 'cacheHierarchy').map(h => ({
@@ -1644,7 +1668,7 @@ async function parseOOXML(bytes, book, log) {
             });
         }
         if (/^xl\/pivotTables\/pivotTable\d+\.xml$/.test(path)) {
-            const pt = els(xmlDoc(dec.decode(zip[path])), 'pivotTableDefinition')[0];
+            const pt = els(xmlDoc(decodePart(zip[path])), 'pivotTableDefinition')[0];
             if (!pt) continue;
             const owner = book.sheets.find(s => (s.rels || []).some(r => r.target === path));
             book.pivots.push({
@@ -1683,7 +1707,7 @@ function parseDataMashup(b64) {
     const zip = fflate.unzipSync(bytes.subarray(8, 8 + zipLen));
     const key = Object.keys(zip).find(k => /Formulas\/Section1\.m$/i.test(k));
     if (!key) throw new Error('Section1.m не найден');
-    let m = dec.decode(zip[key]);
+    let m = decodePart(zip[key]);
     if (m.charCodeAt(0) === 0xFEFF) m = m.slice(1);             // BOM
     return parseSectionM(m);
 }
@@ -1765,6 +1789,33 @@ const M_SOURCES = [
     { re: /Web\.(?:Contents|BrowserContents|Page)\s*\(\s*"([^"]+)"/g,           kind: 'web',    label: 'Web' },
     { re: /AnalysisServices\.Databases?\s*\(\s*"([^"]+)"/g,                      kind: 'db',    label: 'Analysis Services' },
 ];
+
+const M_IDENT = '(#"[^"]+"|[A-Za-z_\\u0400-\\u04FF\\u00C0-\\u024F][A-Za-z0-9_.\\u0400-\\u04FF\\u00C0-\\u024F]*)';
+const M_IDENT_SOURCES = [
+    { re: 'Excel\\.Workbook\\s*\\(\\s*File\\.Contents\\s*\\(\\s*' + M_IDENT, kind: 'file',   label: 'Книга Excel' },
+    { re: 'Csv\\.Document\\s*\\(\\s*File\\.Contents\\s*\\(\\s*' + M_IDENT,   kind: 'file',   label: 'CSV-файл' },
+    { re: 'Json\\.Document\\s*\\(\\s*File\\.Contents\\s*\\(\\s*' + M_IDENT,  kind: 'file',   label: 'JSON-файл' },
+    { re: 'Folder\\.(?:Files|Contents)\\s*\\(\\s*' + M_IDENT,                        kind: 'folder', label: 'Папка' },
+    { re: 'File\\.Contents\\s*\\(\\s*' + M_IDENT,                                    kind: 'file',   label: 'Файл' },
+    { re: 'Web\\.Contents\\s*\\(\\s*' + M_IDENT,                                     kind: 'web',    label: 'Web' },
+    { re: 'Sql\\.Databases?\\s*\\(\\s*' + M_IDENT,                                   kind: 'db',     label: 'SQL Server' },
+];
+
+/** Дополняет источники запроса теми, чей адрес передан параметром, а не строкой. */
+function resolveParamSources(q, params) {
+    M_IDENT_SOURCES.forEach(src => {
+        const re = new RegExp(src.re, 'g');
+        let m;
+        while ((m = re.exec(q.code)) !== null) {
+            let id = m[1];
+            if (id.startsWith('#"')) id = id.slice(2, -1);
+            if (!params.has(id)) continue;                 // не параметр — просто шаг запроса
+            const detail = params.get(id);
+            if (q.sources.some(x => x.detail === detail)) continue;
+            q.sources.push({ kind: src.kind, label: src.label, detail, viaParam: id });
+        }
+    });
+}
 
 function detectMSources(code) {
     const found = [];
@@ -1851,7 +1902,7 @@ function parseSectionM(m) {
         }
 
         queries.push({
-            name, shared: isShared, code: raw.trim(),
+            name, shared: isShared, code: raw.trim(), body,
             steps, result,
             sources: detectMSources(body),
             refs: [],           // заполняется ниже: ссылки на другие запросы
@@ -1859,6 +1910,19 @@ function parseSectionM(m) {
             isFunction: /^\s*\(/.test(body),
         });
     });
+
+    /* параметры-запросы: тело — строковый литерал (обычно с meta [IsParameterQuery=true]).
+       Именно в них лежат пути к внешним файлам. */
+    const params = new Map();
+    queries.forEach(q => {
+        if (q.steps.length) return;
+        const lit = /^\s*"((?:[^"]|"")*)"/.exec(q.body || '');
+        if (!lit) return;
+        q.isParameter = true;
+        q.value = lit[1].replace(/""/g, '"');
+        params.set(q.name, q.value);
+    });
+    queries.forEach(q => resolveParamSources(q, params));
 
     /* связи запрос → запрос: имя одного встречается в теле другого */
     queries.forEach(q => {
@@ -2303,7 +2367,8 @@ function runAudit(books, graph) {
 
         // Неиспользуемые запросы Power Query
         const deadQueries = (book.queries || [])
-            .filter(q => !q.isFunction && !q.loadedTo.length && !(book.queries || []).some(o => o !== q && o.refs.indexOf(q.name) !== -1))
+            .filter(q => !q.isFunction && !q.isParameter && !q.loadedTo.length &&
+                         !(book.queries || []).some(o => o !== q && o.refs.indexOf(q.name) !== -1))
             .map(q => ({ loc: pre + q.name, txt: 'нигде не используется и никуда не выгружается' }));
         add({ id: 'dead-queries', category: 'Гигиена', severity: 'major',
             title: 'Запросы Power Query, которые никому не нужны',
@@ -2424,14 +2489,21 @@ function logLine(kind, text) {
 const setProgress = pct => { $('#progress-fill').style.width = Math.max(0, Math.min(100, pct)) + '%'; };
 
 /** Связываем запросы с таблицами и подключениями: куда именно запрос приземляется. */
+/** Excel санирует имя таблицы: «Передача в аренду» → «Передача_в_аренду».
+ *  Сравнивать имя запроса с именем таблицы напрямую бесполезно. */
+function tableKey(s) {
+    return String(s).replace(/[^0-9A-Za-z_.\u0400-\u04FF\u00C0-\u024F]/g, '_').replace(/_+$/, '');
+}
+
 function linkQueries(book) {
-    const tableNames = new Set((book.tables || []).map(t => t.name));
+    const tableByKey = new Map((book.tables || []).map(t => [tableKey(t.name), t.name]));
     (book.queries || []).forEach(q => {
-        if (tableNames.has(q.name)) q.loadedTo.push(q.name);
+        const t = tableByKey.get(tableKey(q.name));
+        if (t) q.loadedTo.push(t);
         (book.connections || []).filter(c => c.isMashup).forEach(c => {
             const loc = (/Location=([^;]+)/.exec(c.connStr) || [])[1] || (/\[([^\]]+)\]/.exec(c.command) || [])[1];
             if (!loc) return;
-            let decoded = loc.trim();
+            let decoded = loc.trim().replace(/^"(.*)"$/, '$1');   // Location="Имя с пробелами"
             try { decoded = decodeURIComponent(decoded); } catch (e) { /* оставляем как есть */ }
             if (decoded !== q.name) return;
             q.connection = c.name;
@@ -2589,7 +2661,9 @@ function renderLoadedList() {
     if (!APP.books.length) { el.innerHTML = ''; return; }
     el.innerHTML = '<div class="card"><div class="card-title">Загружено</div>' +
         APP.books.map(b => {
-            const conf = b.format === 'xlsx' ? ['full', 'полный разбор'] : b.format === 'xlsb' ? ['partial', 'частичный разбор'] : ['partial', 'ограниченный разбор'];
+            const conf = FULL_FORMATS.has(b.format) ? ['full', 'полный разбор']
+                       : b.format === 'xlsb' ? ['partial', 'частичный разбор']
+                       : ['partial', 'ограниченный разбор'];
             return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--border-light)">' +
                 '<strong style="flex:1;min-width:180px;overflow-wrap:anywhere">' + esc(b.fileName) + '</strong>' +
                 '<span class="pill pill-gray">' + esc(b.format) + '</span>' +
@@ -2984,13 +3058,17 @@ function renderPQ() {
         '<th>Запрос</th><th>Источники</th><th class="num-cell">Шагов</th><th>Берёт из запросов</th><th>Загружается в</th></tr></thead><tbody>' +
         all.map((q, i) =>
             '<tr class="row-link" data-pq="' + i + '"><td><strong>' + esc(q.name) + '</strong>' +
-            (q.isFunction ? ' <span class="pill pill-gray">функция</span>' : '') + '</td>' +
-            '<td>' + (q.sources.length
-                ? q.sources.map(s => '<span class="pill pill-teal" title="' + esc(s.detail) + '">' + (SRC_ICON[s.kind] || '•') + ' ' + esc(s.label) + '</span>').join(' ')
+            (q.isFunction ? ' <span class="pill pill-gray">функция</span>' : '') +
+            (q.isParameter ? ' <span class="pill pill-amber">параметр</span>' : '') + '</td>' +
+            '<td>' + (q.isParameter
+                ? '<span class="mono" style="font-size:11px;overflow-wrap:anywhere" title="' + esc(q.value) + '">' + esc(shortPath(q.value, 70)) + '</span>'
+                : q.sources.length
+                ? q.sources.map(s => '<span class="pill pill-teal" title="' + esc(s.detail) + '">' + (SRC_ICON[s.kind] || '•') +
+                    ' ' + esc(s.label) + (s.viaParam ? ' ← ' + esc(s.viaParam) : '') + '</span>').join(' ')
                 : '<span class="muted">производный</span>') + '</td>' +
-            '<td class="num-cell">' + q.steps.length + '</td>' +
+            '<td class="num-cell">' + (q.isParameter ? '—' : q.steps.length) + '</td>' +
             '<td>' + (q.refs.length ? esc(q.refs.join(', ')) : '<span class="muted">—</span>') + '</td>' +
-            '<td>' + (q.loadedTo.length
+            '<td>' + (q.isParameter ? '<span class="muted">—</span>' : q.loadedTo.length
                 ? q.loadedTo.map(t => '<span class="pill pill-green">' + esc(t) + '</span>').join(' ')
                 : '<span class="pill pill-amber">только подключение</span>') + '</td></tr>').join('') +
         '</tbody></table></div></div>' +
@@ -2999,9 +3077,13 @@ function renderPQ() {
             '<div class="card-title">' + esc(q.name) +
             (APP.books.length > 1 ? ' <span class="hint">' + esc(q.book) + '</span>' : '') +
             ' <button class="btn btn-outline btn-sm" data-focus-node="q:' + q.bi + ':' + esc(q.name) + '" style="margin-left:auto">В графе →</button></div>' +
+            (q.isParameter ? '<div class="issue-why" style="margin-bottom:11px">Параметр-запрос. Значение: ' +
+                '<span class="mono" style="overflow-wrap:anywhere">' + esc(String(q.value)) + '</span></div>' : '') +
             (q.sources.length ? '<div style="margin-bottom:11px">' + q.sources.map(s =>
                 '<div style="font-size:12.5px;margin-bottom:3px">' + (SRC_ICON[s.kind] || '•') + ' <strong>' + esc(s.label) + ':</strong> ' +
-                '<span class="mono" style="overflow-wrap:anywhere">' + esc(s.detail) + '</span></div>').join('') + '</div>' : '') +
+                '<span class="mono" style="overflow-wrap:anywhere">' + esc(s.detail) + '</span>' +
+                (s.viaParam ? ' <span class="pill pill-amber">через параметр ' + esc(s.viaParam) + '</span>' : '') +
+                '</div>').join('') + '</div>' : '') +
             (q.steps.length
                 ? '<div class="pq-steps">' + q.steps.map((s, n) =>
                     '<div class="pq-step' + (s.sources.length ? ' is-source' : '') + '">' +
@@ -3010,7 +3092,9 @@ function renderPQ() {
                     (s.comment ? '<div class="pq-step-note">' + esc(s.comment) + '</div>' : '') +
                     '<div class="pq-step-expr">' + esc(s.expr.length > 320 ? s.expr.slice(0, 320) + ' …' : s.expr) + '</div>' +
                     '</div></div>').join('') + '</div>'
-                : '<div class="muted" style="margin-bottom:10px">Запрос не в форме let/in — смотрите код целиком.</div>') +
+                : '<div class="muted" style="margin-bottom:10px">' +
+                  (q.isParameter ? 'У параметра нет шагов — это просто значение.' : 'Запрос не в форме let/in — смотрите код целиком.') +
+                  '</div>') +
             '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--text-secondary)">Показать M-код целиком</summary>' +
             '<div class="code-box" style="margin-top:9px">' + highlightM(q.code) + '</div></details>' +
             '</div>').join('');
@@ -3390,6 +3474,15 @@ function renderGraph() {
     });
 
     window.__cy = cy;
+    // Бейдж в меню должен показывать то, что видно на холсте, а не общее число
+    // объектов книги: «13 818» рядом с графом из 76 узлов только сбивает с толку.
+    const badge = $('#badge-graph');
+    if (badge) {
+        const total = APP.graph.nodes.filter(x => !x.isParent).length;
+        badge.hidden = false;
+        badge.textContent = fmtNum(nodeCount);
+        badge.title = nodeCount < total ? 'показано ' + fmtNum(nodeCount) + ' из ' + fmtNum(total) + ' объектов' : '';
+    }
     cy.on('tap', 'node', evt => focusNode(evt.target.id()));
     cy.on('tap', evt => { if (evt.target === cy) clearFocus(); });
 
@@ -3460,8 +3553,11 @@ function showNodeDetails(id, upSet, downSet) {
         kv.push(['Колонок', (r.columns || []).length]);
         kv.push(['Источник', r.tableType === 'queryTable' ? 'Power Query' : 'лист']);
     } else if (n.type === 'query') {
-        kv.push(['Шагов', (r.steps || []).length]);
-        kv.push(['Загружается в', (r.loadedTo || []).join(', ') || 'только подключение']);
+        if (r.isParameter) { kv.push(['Тип', 'параметр']); kv.push(['Значение', r.value]); }
+        else {
+            kv.push(['Шагов', (r.steps || []).length]);
+            kv.push(['Загружается в', (r.loadedTo || []).join(', ') || 'только подключение']);
+        }
         if (r.isFunction) kv.push(['Тип', 'функция']);
     } else if (n.type === 'source') {
         kv.push(['Тип', n.srcLabel || '—']);
