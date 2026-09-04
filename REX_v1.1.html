@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -379,6 +379,16 @@ tr.row-link { cursor: pointer; }
 .tchip.on { border-color: var(--c); color: var(--text); background: color-mix(in srgb, var(--c) 8%, #fff); }
 .tchip.on .tchip-dot { background: var(--c); }
 .graph-hint { font-size: 11.5px; color: var(--warning); font-weight: 600; }
+/* Объяснение, почему включённый тип может не показать ни одной связи */
+.type-warn {
+    display: flex; align-items: center; gap: 8px; flex-basis: 100%;
+    margin-top: 2px; padding: 7px 10px; border-radius: 8px;
+    background: var(--warning-light); border: 1px solid #fcd34d;
+    color: #92400e; font-size: 11.5px; font-weight: 600; line-height: 1.45;
+}
+.type-warn svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2; fill: none; flex-shrink: 0; }
+.type-warn b { color: #78350f; }
+.type-warn .btn { margin-left: auto; background: #b45309; flex-shrink: 0; }
 
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .seg button {
@@ -402,7 +412,8 @@ tr.row-link { cursor: pointer; }
 #cy { width: 100%; height: 100%; min-height: 420px; }
 .graph-empty {
     position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; gap: 8px; color: var(--text-muted); font-size: 13px; text-align: center; padding: 24px;
+    justify-content: center; gap: 8px; color: var(--text-muted); font-size: 13px; text-align: center;
+    padding: 24px; background: var(--card);
 }
 
 /* Легенда поверх холста */
@@ -416,13 +427,54 @@ tr.row-link { cursor: pointer; }
 .lg-item { display: flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text-secondary); }
 .lg-swatch { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 .lg-swatch.round { border-radius: 50%; }
-.graph-legend .lg-toggle { position: absolute; top: 6px; right: 8px; background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 14px; line-height: 1; padding: 2px; }
-.graph-legend.collapsed .lg-items, .graph-legend.collapsed .lg-edges { display: none; }
-.lg-edges { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border-light); display: flex; flex-direction: column; gap: 3px; }
-.lg-edge { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text-secondary); }
-.lg-line { width: 22px; height: 0; border-top: 2px solid var(--text-muted); flex-shrink: 0; }
-.lg-line.dashed { border-top-style: dashed; }
-.lg-line.red { border-color: var(--danger); border-top-style: dashed; }
+.graph-legend .lg-toggle {
+    position: absolute; top: 5px; right: 6px; background: none; border: none; cursor: pointer;
+    color: var(--text-muted); font-size: 14px; line-height: 1; padding: 2px 4px; border-radius: 4px;
+    transition: transform .2s;
+}
+.graph-legend .lg-toggle:hover { color: var(--text); background: var(--border-light); }
+.graph-legend.collapsed .lg-scroll { display: none; }
+.graph-legend.collapsed .lg-toggle { transform: rotate(180deg); }
+.lg-scroll { max-height: min(46vh, 420px); overflow-y: auto; margin-top: 4px; }
+
+/* Строка легенды = кликабельный фильтр: наведение подсвечивает такие связи,
+   клик прячет их. Легенда, которую нельзя потрогать, читается хуже. */
+.lg-edges { display: flex; flex-direction: column; gap: 1px; }
+.lg-edge {
+    display: flex; align-items: flex-start; gap: 7px; padding: 4px 6px; border-radius: 6px;
+    font-weight: 600; color: var(--text-secondary); cursor: pointer; user-select: none;
+    transition: background .12s, opacity .12s;
+}
+.lg-edge:hover { background: var(--border-light); }
+.lg-edge.off { opacity: .38; }
+.lg-edge.off .lg-edge-name { text-decoration: line-through; }
+.lg-line { width: 26px; flex-shrink: 0; margin-top: 6px; height: 0; border-top-width: 2px; }
+.lg-arrow { font-size: 9px; margin-left: -4px; margin-top: 1px; flex-shrink: 0; }
+.lg-edge-body { min-width: 0; flex: 1; }
+.lg-edge-name { display: block; }
+.lg-edge-hint { display: none; font-weight: 500; font-size: 10.5px; line-height: 1.45; color: var(--text-muted); margin-top: 2px; }
+.lg-edge:hover .lg-edge-hint, .lg-edge.expanded .lg-edge-hint { display: block; }
+.lg-edge-num { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted); flex-shrink: 0; margin-top: 2px; }
+
+.lg-sub { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-light); }
+.lg-more {
+    background: none; border: none; padding: 0; cursor: pointer; font-family: inherit;
+    font-size: 10.5px; font-weight: 700; color: var(--primary); text-transform: none; letter-spacing: 0;
+}
+.lg-matrix { margin-top: 5px; display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; }
+.lg-mrow { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; line-height: 1.5; }
+.lg-mrow .lg-mfrom { font-weight: 700; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; }
+.lg-mrow .lg-mto { color: var(--text-muted); }
+
+/* Подсказка прямо на связи: прочитать линию проще, чем сверяться с легендой */
+.cy-tip {
+    position: absolute; z-index: 40; pointer-events: none; max-width: 280px;
+    background: var(--sidebar-bg); color: #f8fafc; border-radius: 8px;
+    padding: 7px 10px; font-size: 11.5px; line-height: 1.5; box-shadow: var(--shadow-lg);
+    transform: translate(-50%, calc(-100% - 10px));
+}
+.cy-tip b { color: #93c5fd; }
+.cy-tip .tip-hint { display: block; color: #cbd5e1; font-size: 10.5px; margin-top: 3px; }
 
 /* Панель деталей узла */
 .graph-details {
@@ -457,6 +509,10 @@ tr.row-link { cursor: pointer; }
 }
 .gd-link:hover { background: var(--primary-light); border-color: var(--primary); }
 .gd-link .gd-count { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); }
+.gd-link-body { min-width: 0; flex: 1; }
+.gd-link-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gd-rel { display: inline-block; font-size: 10px; font-weight: 700; margin-right: 6px; }
+.gd-rel-far { color: var(--text-muted); font-weight: 600; font-style: italic; }
 .gd-empty { color: var(--text-muted); font-size: 12px; font-style: italic; }
 
 @media (max-width: 900px) {
@@ -792,7 +848,7 @@ table.matrix td.cell[data-n] { cursor: default; }
                 <button data-layout="cose"    title="Силовая раскладка: видно кластеры">Кластерами</button>
             </div>
             <label class="chk" title="Показывать листы внутри рамки книги"><input type="checkbox" id="opt-groups" checked> Группировать по книгам</label>
-            <label class="chk" title="Скрыть узлы без единой связи"><input type="checkbox" id="opt-orphans" checked> Одиночные узлы</label>
+            <label class="chk" title="Объекты, у которых нет ни одной связи на графе"><input type="checkbox" id="opt-orphans" checked> Показывать несвязанные</label>
             <label class="chk" title="INDIRECT/OFFSET и подобные — ссылки, которые собираются во время расчёта"><input type="checkbox" id="opt-invisible" checked> «Невидимые» связи</label>
             <div style="flex:1"></div>
             <button class="btn btn-outline btn-sm" id="btn-graph-fit" title="Вписать в экран">
@@ -810,21 +866,26 @@ table.matrix td.cell[data-n] { cursor: default; }
             <span style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted);font-weight:700">Показывать</span>
             <div class="type-filter" id="type-filter"></div>
             <span class="graph-hint" id="type-hint"></span>
+            <div class="type-warn" id="type-warn" hidden></div>
         </div>
 
         <div class="graph-body">
             <div class="graph-canvas-wrap">
                 <div id="cy"></div>
-                <div class="graph-legend collapsed" id="graph-legend">
-                    <button class="lg-toggle" id="lg-toggle" aria-label="Развернуть легенду" title="Легенда">▾</button>
-                    <div class="lg-title">Легенда</div>
-                    <div class="lg-items" id="lg-items"></div>
-                    <div class="lg-edges">
-                        <div class="lg-edge"><span class="lg-line"></span> ссылка формулы</div>
-                        <div class="lg-edge"><span class="lg-line dashed"></span> загрузка данных (PQ, сводная)</div>
-                        <div class="lg-edge"><span class="lg-line red"></span> «невидимая» связь / проблема</div>
+                <div class="graph-legend" id="graph-legend">
+                    <button class="lg-toggle" id="lg-toggle" aria-label="Свернуть легенду" title="Свернуть легенду">▾</button>
+                    <div class="lg-title">Связи на графе</div>
+                    <div class="lg-scroll">
+                        <div class="lg-edges" id="lg-edges"></div>
+                        <div class="lg-sub">
+                            <button class="lg-more" id="lg-more" aria-expanded="false">Что с чем может быть связано ▾</button>
+                            <div class="lg-matrix" id="lg-matrix" hidden></div>
+                        </div>
+                        <div class="lg-title" style="margin-top:9px">Объекты</div>
+                        <div class="lg-items" id="lg-items"></div>
                     </div>
                 </div>
+                <div class="cy-tip" id="cy-tip" hidden></div>
                 <div class="graph-empty" id="graph-empty" hidden></div>
             </div>
 
@@ -1021,7 +1082,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.0';
+const APP_VERSION = '1.1';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1030,6 +1091,7 @@ const APP = {
     health: null,
     activeSheet: null,
     typeFilter: null,   // какие типы объектов показывать на графе
+    edgeFilter: null,   // какие типы связей показывать (управляется легендой)
     userLayout: false,  // выбирал ли раскладку человек (тогда не переключаем сами)
 };
 
@@ -2210,15 +2272,31 @@ const NODE_TYPES = {
     measure: { label: 'Мера модели',        color: '#4f46e5', shape: 'hexagon' },
 };
 
+/**
+ * Типы связей. Цвет кодирует ПРИРОДУ связи, начертание — её надёжность:
+ *   сплошная  — ссылка есть в формуле, факт;
+ *   пунктир   — данные загружаются механизмом Excel (PQ, сводная, внешняя книга);
+ *   точечная  — не поток данных, а размещение («лежит на»);
+ *   красный   — восстановлено по догадке, проверяйте руками.
+ * Порядок здесь = порядок в легенде.
+ */
 const EDGE_TYPES = {
-    ref:       { label: 'ссылка формулы',   style: 'solid'  },
-    contains:  { label: 'лежит на листе',   style: 'solid'  },
-    load:      { label: 'загружается в',    style: 'dashed' },
-    feed:      { label: 'питает запрос',    style: 'dashed' },
-    src:       { label: 'источник',         style: 'dashed' },
-    ext:       { label: 'внешняя ссылка',   style: 'dashed' },
-    pivot:     { label: 'источник сводной', style: 'dashed' },
-    invisible: { label: 'невидимая связь',  style: 'invisible' },
+    ref:       { label: 'Ссылка формулы',   color: '#64748b', dash: 'solid',  arrow: true,
+                 hint: 'Формула на одном объекте читает данные с другого. Самая надёжная связь: она прямо записана в ячейке.' },
+    src:       { label: 'Внешний источник', color: '#0d9488', dash: 'dashed', arrow: true,
+                 hint: 'Запрос Power Query забирает данные снаружи книги: файл, папка, база, web.' },
+    feed:      { label: 'Запрос → запрос',  color: '#a78bfa', dash: 'dashed', arrow: true,
+                 hint: 'Один запрос Power Query использует результат другого.' },
+    load:      { label: 'Загрузка данных',  color: '#7c3aed', dash: 'dashed', arrow: true,
+                 hint: 'Запрос выгружает результат в умную таблицу, на лист или в модель данных.' },
+    pivot:     { label: 'Источник сводной', color: '#db2777', dash: 'dashed', arrow: true,
+                 hint: 'Откуда сводная берёт данные: лист, умная таблица, таблица модели или мера.' },
+    ext:       { label: 'Внешняя книга',    color: '#94a3b8', dash: 'dashed', arrow: true,
+                 hint: 'Формула ссылается на другой файл Excel. Такие связи ломаются при переносе книги.' },
+    contains:  { label: 'Лежит на листе',   color: '#cbd5e1', dash: 'dotted', arrow: false,
+                 hint: 'Не поток данных, а размещение: таблица или сводная физически находится на этом листе. Стрелки нет намеренно.' },
+    invisible: { label: 'Невидимая связь',  color: '#ef4444', dash: 'dashed', arrow: true,
+                 hint: 'Восстановлена по строке внутри ДВССЫЛ/INDIRECT. Это догадка, а не факт из формулы: проверьте вручную.' },
 };
 
 /** Кеш, на котором построена сводная. Адресация — через cacheId → r:id → путь. */
@@ -2860,6 +2938,7 @@ async function loadFiles(fileList) {
     logLine('ok', 'Строю граф связей…');
     await nextFrame();
     APP.typeFilter = null;                        // новая книга — пересобираем фильтр типов
+    APP.edgeFilter = null;
     APP.userLayout = false;
     APP.graph  = buildGraph(APP.books);
     deriveInvisibleEdges(APP.graph, APP.books);   // догадки по INDIRECT("Лист!A1")
@@ -3627,7 +3706,9 @@ function cyElements() {
     const allowed = new Set(APP.graph.nodes.filter(typeOk).map(n => n.id));
 
     const edges = APP.graph.edges.filter(e =>
-        (showInvisible || e.type !== 'invisible') && allowed.has(e.source) && allowed.has(e.target));
+        (showInvisible || e.type !== 'invisible') &&
+        (!APP.edgeFilter || APP.edgeFilter.has(e.type)) &&
+        allowed.has(e.source) && allowed.has(e.target));
     // Степень считаем уже по отфильтрованным рёбрам: иначе лист, связанный только
     // со скрытым типом, останется висеть в графе как «не одиночный»
     const deg = new Map();
@@ -3675,6 +3756,11 @@ let currentLayout = 'dagre-lr';
    с силовой раскладки (она укладывается в экран), но выбор пользователя не трогаем. */
 const FLOW_LAYOUT_LIMIT = 35;
 
+/* Потолок, выше которого граф не строится вовсе. Силовая раскладка на десятке
+   тысяч узлов вешает вкладку на минуты, а клубок из 13 742 именованных диапазонов
+   всё равно нечитаем. Честнее сказать об этом, чем молча заморозить браузер. */
+const MAX_GRAPH_NODES = 1500;
+
 function renderGraph() {
     const holder = $('#cy');
     if (!window.cytoscape) {
@@ -3696,6 +3782,22 @@ function renderGraph() {
     if (!els.length) { $('#graph-empty').textContent = 'Нечего показывать: все объекты отфильтрованы.'; return; }
 
     const nodeCount = els.filter(e => !e.data.source).length;
+
+    if (nodeCount > MAX_GRAPH_NODES) {
+        if (window.__cy) { window.__cy.destroy(); window.__cy = null; }
+        $('#graph-empty').hidden = false;
+        $('#graph-empty').innerHTML =
+            '<strong style="font-size:15px;color:var(--text)">Слишком много объектов: ' + fmtNum(nodeCount) + '</strong>' +
+            '<div style="max-width:420px;line-height:1.6">Граф из такого числа узлов браузер строит минутами, ' +
+            'а прочитать его всё равно нельзя. Уточните фильтр «Показывать» — например, выключите ' +
+            'именованные диапазоны, их в книгах бывают тысячи.</div>' +
+            '<button class="btn btn-sm" id="btn-graph-defaults" style="margin-top:6px">Вернуть рекомендуемый фильтр</button>';
+        const badge = $('#badge-graph');
+        if (badge) { badge.hidden = false; badge.textContent = '—'; badge.title = 'граф не построен: слишком много объектов'; }
+        buildTypeFilter(false);
+        return;
+    }
+
     let layoutNote = '';
     if (!APP.userLayout) {
         if (nodeCount > FLOW_LAYOUT_LIMIT) {
@@ -3738,17 +3840,24 @@ function renderGraph() {
             }},
             { selector: 'edge', style: {
                 'width': 'mapData(count, 1, 60, 1.2, 5)',
-                'line-color': '#cbd5e1', 'target-arrow-color': '#cbd5e1',
                 'target-arrow-shape': 'triangle', 'arrow-scale': .85,
                 'curve-style': 'bezier', 'label': 'data(label)',
                 'font-size': 9, 'color': '#94a3b8', 'text-rotation': 'autorotate',
                 'text-background-color': '#fff', 'text-background-opacity': .9, 'text-background-padding': 1,
                 'transition-property': 'opacity, line-color', 'transition-duration': '160ms',
             }},
-            { selector: 'edge[type = "load"], edge[type = "feed"], edge[type = "src"], edge[type = "pivot"], edge[type = "ext"]',
-              style: { 'line-style': 'dashed', 'line-dash-pattern': [6, 3] } },
-            { selector: 'edge[type = "contains"]', style: { 'line-color': '#e2e8f0', 'target-arrow-shape': 'none', 'line-style': 'dotted' } },
-            { selector: 'edge[type = "invisible"]', style: { 'line-color': '#ef4444', 'target-arrow-color': '#ef4444', 'line-style': 'dashed', 'opacity': .85 } },
+            // Оформление каждого типа связи — из EDGE_TYPES, чтобы легенда и холст
+            // не могли разойтись: источник истины один.
+            ...Object.entries(EDGE_TYPES).map(([t, v]) => ({
+                selector: 'edge[type = "' + t + '"]',
+                style: Object.assign({
+                    'line-color': v.color,
+                    'target-arrow-color': v.color,
+                    'line-style': v.dash,
+                }, v.dash === 'dashed' ? { 'line-dash-pattern': [6, 3] } : {},
+                   v.arrow ? {} : { 'target-arrow-shape': 'none' }),
+            })),
+            { selector: 'edge.edge-hl', style: { 'width': 4, 'opacity': 1, 'z-index': 20 } },
             { selector: '.faded', style: { 'opacity': .12, 'text-opacity': .05 } },
             { selector: '.hl-node', style: { 'border-color': '#0f172a', 'border-width': 3.5 } },
             { selector: '.hl-up',   style: { 'line-color': '#0d9488', 'target-arrow-color': '#0d9488', 'opacity': 1, 'width': 3 } },
@@ -3756,6 +3865,39 @@ function renderGraph() {
         ],
         layout: LAYOUTS[currentLayout],
     });
+
+    /* Подсказка прямо на линии: понять связь наведением проще, чем сверяясь
+       с легендой в углу. Показываем тип связи, её направление и вес. */
+    const tip = $('#cy-tip');
+    const showTip = (rp, html) => {
+        tip.innerHTML = html;
+        tip.style.left = rp.x + 'px';
+        tip.style.top = rp.y + 'px';
+        tip.hidden = false;
+    };
+    cy.on('mouseover', 'edge', evt => {
+        const e = evt.target, t = e.data('type');
+        const v = EDGE_TYPES[t] || { label: t, hint: '', color: '#94a3b8' };
+        const cnt = e.data('count') || 1;
+        showTip(evt.renderedPosition || e.midpoint(),
+            '<b style="color:' + v.color + '">' + esc(v.label) + '</b>' +
+            (cnt > 1 ? ' · ' + fmtNum(cnt) + ' ' + (t === 'ref' ? 'ссылок' : 'связей') : '') +
+            '<br>' + esc(e.source().data('label')) + ' → ' + esc(e.target().data('label')) +
+            '<span class="tip-hint">' + esc(v.hint) + '</span>');
+        e.addClass('edge-hl');
+    });
+    cy.on('mouseout', 'edge', evt => { tip.hidden = true; evt.target.removeClass('edge-hl'); });
+    cy.on('mouseover', 'node', evt => {
+        const nd = APP.graph.index.get(evt.target.id());
+        if (!nd) return;
+        const meta = NODE_TYPES[nd.type] || {};
+        const loc = nd.sheet || (nd.ref || {}).sheet;
+        showTip(evt.renderedPosition || evt.target.renderedPosition(),
+            '<b>' + esc(nd.label) + '</b><span class="tip-hint">' + esc(meta.label || nd.type) +
+            (loc ? ' · на листе «' + loc + '»' : '') + '</span>');
+    });
+    cy.on('mouseout', 'node', () => { tip.hidden = true; });
+    cy.on('pan zoom drag', () => { tip.hidden = true; });
 
     window.__cy = cy;
     // Бейдж в меню должен показывать то, что видно на холсте, а не общее число
@@ -3802,6 +3944,12 @@ function focusNode(id) {
         }
     };
     seeds.forEach(sd => { walk(sd, 'up', up, upE); walk(sd, 'down', down, downE); });
+
+    // Тип связи осмыслен только для прямых соседей: у дальних он свой на каждом шаге
+    const relUp = new Map(), relDown = new Map();
+    const addRel = (m, k, v) => { if (!m.has(k)) m.set(k, new Set()); m.get(k).add(v); };
+    upE.forEach(e => { if (seedSet.has(e.target().id())) addRel(relUp, e.source().id(), e.data('type')); });
+    downE.forEach(e => { if (seedSet.has(e.source().id())) addRel(relDown, e.target().id(), e.data('type')); });
     seedSet.forEach(sd => { up.delete(sd); down.delete(sd); });   // сам узел и его содержимое — не «связи»
 
     node.removeClass('faded').addClass('hl-node');
@@ -3811,7 +3959,7 @@ function focusNode(id) {
     upE.forEach(e => e.removeClass('faded').addClass('hl-up'));
     downE.forEach(e => e.removeClass('faded').addClass('hl-down'));
 
-    showNodeDetails(id, up, down, seeds.slice(1));
+    showNodeDetails(id, up, down, seeds.slice(1), relUp, relDown);
 }
 
 function clearFocus() {
@@ -3819,7 +3967,7 @@ function clearFocus() {
     $('#graph-details').hidden = true;
 }
 
-function showNodeDetails(id, upSet, downSet, hosted) {
+function showNodeDetails(id, upSet, downSet, hosted, relUp, relDown) {
     const n = APP.graph.index.get(id);
     if (!n) return;
     const type = NODE_TYPES[n.type] || { label: n.type, color: '#64748b' };
@@ -3881,11 +4029,19 @@ function showNodeDetails(id, upSet, downSet, hosted) {
     }
 
     const nm = x => (APP.graph.index.get(x) || {}).label || x;
-    const linkList = (ids, empty) => ids.size
-        ? '<div class="gd-link-list">' + Array.from(ids).slice(0, 40).map(x =>
-            '<div class="gd-link" data-focus-node="' + esc(x) + '">' +
-            '<span class="lg-swatch" style="background:' + ((NODE_TYPES[(APP.graph.index.get(x) || {}).type] || {}).color || '#94a3b8') + '"></span>' +
-            '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis">' + esc(nm(x)) + '</span></div>').join('') +
+    const linkList = (ids, empty, rel) => ids.size
+        ? '<div class="gd-link-list">' + Array.from(ids).slice(0, 40).map(x => {
+            const types = rel && rel.get(x);
+            const badge = types
+                ? Array.from(types).map(t => {
+                    const v = EDGE_TYPES[t] || { label: t, color: '#94a3b8' };
+                    return '<span class="gd-rel" style="color:' + v.color + '" title="' + esc(v.hint || '') + '">' + esc(v.label) + '</span>';
+                  }).join('')
+                : '<span class="gd-rel gd-rel-far" title="Связь не прямая: объект достигается через цепочку">через цепочку</span>';
+            return '<div class="gd-link" data-focus-node="' + esc(x) + '">' +
+                '<span class="lg-swatch" style="background:' + ((NODE_TYPES[(APP.graph.index.get(x) || {}).type] || {}).color || '#94a3b8') + '"></span>' +
+                '<span class="gd-link-body"><span class="gd-link-name">' + esc(nm(x)) + '</span>' + badge + '</span></div>';
+          }).join('') +
           (ids.size > 40 ? '<div class="muted" style="font-size:11px;padding:4px 8px">…и ещё ' + (ids.size - 40) + '</div>' : '') + '</div>'
         : '<div class="gd-empty">' + empty + '</div>';
 
@@ -3907,10 +4063,11 @@ function showNodeDetails(id, upSet, downSet, hosted) {
             ? '<div class="gd-section"><h4>На этом листе лежит</h4>' + linkList(new Set(hosted), '') +
               '<div class="muted" style="font-size:11px;margin-top:5px">Связи этих объектов учтены ниже как связи листа.</div></div>'
             : '') +
-        '<div class="gd-section"><h4>Берёт данные из (' + upSet.size + ')</h4>' + linkList(upSet, 'Ни от чего не зависит — это источник.') + '</div>' +
+        '<div class="gd-section"><h4>Берёт данные из (' + upSet.size + ')</h4>' +
+            linkList(upSet, 'Ни от чего не зависит — это источник.', relUp) + '</div>' +
         '<div class="gd-section"><h4>Влияет на (' + downSet.size + ')</h4>' + linkList(downSet,
             n.type === 'sheet' ? 'Ничего не читает данные с этого листа — ни напрямую, ни через таблицы на нём.'
-                               : 'Ничего от него не зависит — тупик.') + '</div>' +
+                               : 'Ничего от него не зависит — тупик.', relDown) + '</div>' +
         (downSet.size ? '<div class="gd-section"><h4>Анализ влияния</h4><div class="issue-why" style="margin:0">' +
             'Если удалить этот объект, пострадает <strong>' + downSet.size + '</strong> ' +
             'связанных объектов вниз по цепочке.</div></div>' : '') +
@@ -3937,16 +4094,69 @@ function buildTypeFilter(reset) {
         APP.typeFilter = on;
     }
 
-    $('#type-filter').innerHTML = TYPE_ORDER.filter(t => counts[t]).map(t =>
-        '<button class="tchip' + (APP.typeFilter.has(t) ? ' on' : '') + '" data-type="' + t + '"' +
-        ' style="--c:' + NODE_TYPES[t].color + '" title="Показать/скрыть: ' + esc(NODE_TYPES[t].label) + '">' +
-        '<span class="tchip-dot"></span>' + esc(NODE_TYPES[t].label) + ' <b>' + counts[t] + '</b></button>').join('');
+    // С каким типом объект вообще может быть связан — подсказка в тултипе чипа
+    const nb = typeNeighbours();
+    const nbLabels = t => Array.from(nb.get(t) || [])
+        .filter(x => x !== 'book' && x !== t)
+        .map(x => (NODE_TYPES[x] || {}).label || x).sort().join(', ');
+
+    $('#type-filter').innerHTML = TYPE_ORDER.filter(t => counts[t]).map(t => {
+        const rel = nbLabels(t);
+        return '<button class="tchip' + (APP.typeFilter.has(t) ? ' on' : '') + '" data-type="' + t + '"' +
+            ' style="--c:' + NODE_TYPES[t].color + '"' +
+            ' title="' + esc(NODE_TYPES[t].label) + (rel ? ' — связан с: ' + esc(rel) : ' — связей нет') + '">' +
+            '<span class="tchip-dot"></span>' + esc(NODE_TYPES[t].label) + ' <b>' + counts[t] + '</b></button>';
+    }).join('');
 
     const hiddenTypes = Object.keys(counts).filter(t => !APP.typeFilter.has(t));
     const hiddenCount = hiddenTypes.reduce((a, t) => a + counts[t], 0);
-    $('#type-hint').textContent = hiddenCount
-        ? 'скрыто ' + fmtNum(hiddenCount) + ' объектов, чтобы граф читался — включите чипом'
-        : '';
+
+    /* Включённый тип, у которого не включён ни один сосед, повиснет одинокими
+       точками. Молча показывать россыпь точек — худший вариант: объясняем. */
+    const dangling = Array.from(APP.typeFilter).filter(t => {
+        if (!counts[t] || !nb.has(t)) return false;
+        const soseds = Array.from(nb.get(t)).filter(x => x !== t && x !== 'book');
+        return soseds.length > 0 && !soseds.some(x => APP.typeFilter.has(x));
+    });
+
+    const parts = [];
+    if (hiddenCount) parts.push('скрыто ' + fmtNum(hiddenCount) + ' объектов, чтобы граф читался — включите чипом');
+    $('#type-hint').innerHTML = parts.join(' · ');
+
+    const warn = $('#type-warn');
+    if (dangling.length) {
+        const t = dangling[0];
+        const need = Array.from(nb.get(t)).filter(x => x !== t && x !== 'book');
+        warn.hidden = false;
+        warn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>' +
+            '<span>«' + esc((NODE_TYPES[t] || {}).label || t) + '» связан только с: <b>' + esc(nbLabels(t)) +
+            '</b> — без них объекты повиснут без связей.</span>' +
+            '<button class="btn btn-sm" data-enable-types="' + esc(need.join(',')) + '">Включить</button>';
+    } else {
+        warn.hidden = true;
+        warn.innerHTML = '';
+    }
+}
+
+/**
+ * Какие типы объектов связаны между собой в ЭТОЙ книге. Считается по фактическим
+ * рёбрам, ничего не захардкожено. Нужно, чтобы объяснить, почему включённый тип
+ * может не показать ни одной связи: именованные диапазоны, например, связаны
+ * только с листами, и без листов висят одинокими точками.
+ */
+function typeNeighbours() {
+    const map = new Map();
+    const add = (a, b) => {
+        if (!map.has(a)) map.set(a, new Set());
+        map.get(a).add(b);
+    };
+    APP.graph.edges.forEach(e => {
+        const s = APP.graph.index.get(e.source), t = APP.graph.index.get(e.target);
+        if (!s || !t) return;
+        add(s.type, t.type);
+        add(t.type, s.type);
+    });
+    return map;
 }
 
 function buildLegend() {
@@ -3955,6 +4165,35 @@ function buildLegend() {
         .filter(([k]) => used.has(k) && k !== 'book')
         .map(([, v]) => '<span class="lg-item"><span class="lg-swatch" style="background:' + v.color + '"></span>' + esc(v.label) + '</span>')
         .join('');
+
+    /* ── связи: показываем только те типы, что реально есть в книге */
+    const counts = {};
+    APP.graph.edges.forEach(e => { counts[e.type] = (counts[e.type] || 0) + 1; });
+    if (!APP.edgeFilter) APP.edgeFilter = new Set(Object.keys(counts));
+
+    $('#lg-edges').innerHTML = Object.entries(EDGE_TYPES)
+        .filter(([t]) => counts[t])
+        .map(([t, v]) => {
+            const off = !APP.edgeFilter.has(t);
+            return '<div class="lg-edge' + (off ? ' off' : '') + '" data-edge="' + t + '"' +
+                ' title="Клик — скрыть или показать эти связи">' +
+                '<span class="lg-line" style="border-top-style:' + v.dash + ';border-top-color:' + v.color + '"></span>' +
+                (v.arrow ? '<span class="lg-arrow" style="color:' + v.color + '">▶</span>' : '<span class="lg-arrow"></span>') +
+                '<span class="lg-edge-body"><span class="lg-edge-name">' + esc(v.label) + '</span>' +
+                '<span class="lg-edge-hint">' + esc(v.hint) + '</span></span>' +
+                '<span class="lg-edge-num">' + fmtNum(counts[t]) + '</span></div>';
+        }).join('');
+
+    /* ── «что с чем может быть связано» — ответ на вопрос, почему тип не светится */
+    const nb = typeNeighbours();
+    $('#lg-matrix').innerHTML = TYPE_ORDER.filter(t => nb.has(t)).map(t => {
+        const meta = NODE_TYPES[t] || {};
+        const to = Array.from(nb.get(t)).filter(x => x !== 'book')
+            .map(x => (NODE_TYPES[x] || {}).label || x).sort();
+        return '<div class="lg-mrow"><span class="lg-mfrom">' +
+            '<span class="lg-swatch" style="background:' + meta.color + '"></span>' + esc(meta.label || t) +
+            '</span><span class="lg-mto">↔ ' + esc(to.join(', ')) + '</span></div>';
+    }).join('') || '<div class="lg-mrow"><span class="lg-mto">связей в книге нет</span></div>';
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -4014,6 +4253,13 @@ function initEvents() {
         const goto = e.target.closest('[data-goto]');
         if (goto) { goPage(goto.dataset.goto); return; }
 
+        const enable = e.target.closest('[data-enable-types]');
+        if (enable) {
+            enable.dataset.enableTypes.split(',').filter(Boolean).forEach(t => APP.typeFilter.add(t));
+            renderGraph();
+            return;
+        }
+
         const focus = e.target.closest('[data-focus-node]');
         if (focus) {
             const id = focus.dataset.focusNode;
@@ -4061,7 +4307,40 @@ function initEvents() {
 
     /* граф: панель, раскладки, фильтры */
     $('#gd-close').onclick = clearFocus;
-    $('#lg-toggle').onclick = () => $('#graph-legend').classList.toggle('collapsed');
+    $('#lg-toggle').onclick = () => {
+        const lg = $('#graph-legend');
+        lg.classList.toggle('collapsed');
+        $('#lg-toggle').title = lg.classList.contains('collapsed') ? 'Показать легенду' : 'Свернуть легенду';
+    };
+    $('#lg-more').onclick = () => {
+        const m = $('#lg-matrix'), b = $('#lg-more');
+        m.hidden = !m.hidden;
+        b.setAttribute('aria-expanded', String(!m.hidden));
+        b.textContent = 'Что с чем может быть связано ' + (m.hidden ? '▾' : '▴');
+    };
+    // Наведение на строку легенды подсвечивает такие связи, клик — прячет их
+    $('#lg-edges').addEventListener('mouseover', e => {
+        const row = e.target.closest('.lg-edge');
+        if (!row || !window.__cy) return;
+        window.__cy.edges().forEach(x => {
+            if (x.data('type') === row.dataset.edge) x.addClass('edge-hl');
+            else x.addClass('faded');
+        });
+    });
+    $('#lg-edges').addEventListener('mouseout', e => {
+        if (e.target.closest('.lg-edge') && window.__cy) {
+            window.__cy.edges().removeClass('edge-hl');
+            if (!$$('.hl-node', document).length) window.__cy.elements().removeClass('faded');
+        }
+    });
+    $('#lg-edges').addEventListener('click', e => {
+        const row = e.target.closest('.lg-edge');
+        if (!row) return;
+        const t = row.dataset.edge;
+        if (!APP.edgeFilter) APP.edgeFilter = new Set(Object.keys(EDGE_TYPES));
+        if (APP.edgeFilter.has(t)) APP.edgeFilter.delete(t); else APP.edgeFilter.add(t);
+        renderGraph();
+    });
     $$('.seg [data-layout]').forEach(b => b.onclick = () => {
         $$('.seg [data-layout]').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
@@ -4076,6 +4355,10 @@ function initEvents() {
         const t = chip.dataset.type;
         if (APP.typeFilter.has(t)) APP.typeFilter.delete(t); else APP.typeFilter.add(t);
         renderGraph();
+    });
+    // Кнопка живёт внутри заглушки «слишком много объектов», поэтому через делегирование
+    document.addEventListener('click', e => {
+        if (e.target.closest('#btn-graph-defaults')) { buildTypeFilter(true); renderGraph(); }
     });
     $('#btn-graph-fit').onclick   = () => { if (window.__cy) window.__cy.fit(undefined, 40); };
     $('#btn-graph-reset').onclick = () => { clearFocus(); if (window.__cy) window.__cy.layout(LAYOUTS[currentLayout]).run(); };
