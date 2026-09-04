@@ -80,6 +80,10 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Атрибут hidden должен побеждать любой наш display: иначе .graph-details { display:flex }
+   перебивает браузерное правило по специфичности, и «скрытая» панель остаётся видимой. */
+[hidden] { display: none !important; }
+
 body {
     font-family: 'Manrope', system-ui, -apple-system, sans-serif;
     background: var(--bg); color: var(--text);
@@ -334,6 +338,20 @@ tr.row-link { cursor: pointer; }
 .gs-opt { padding: 7px 10px; border-radius: 7px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .gs-opt:hover, .gs-opt.active { background: var(--primary-light); }
 .gs-opt .gs-type { font-size: 10px; text-transform: uppercase; letter-spacing: .3px; color: var(--text-muted); font-weight: 700; margin-left: auto; }
+
+.type-filter { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.tchip {
+    display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 7px;
+    font-family: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer;
+    border: 1.5px solid var(--border); background: var(--card); color: var(--text-muted);
+    transition: border-color .15s, color .15s, background .15s;
+}
+.tchip .tchip-dot { width: 8px; height: 8px; border-radius: 3px; background: var(--border); flex-shrink: 0; }
+.tchip b { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; opacity: .8; }
+.tchip:hover { border-color: var(--c); color: var(--text-secondary); }
+.tchip.on { border-color: var(--c); color: var(--text); background: color-mix(in srgb, var(--c) 8%, #fff); }
+.tchip.on .tchip-dot { background: var(--c); }
+.graph-hint { font-size: 11.5px; color: var(--warning); font-weight: 600; }
 
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .seg button {
@@ -737,6 +755,12 @@ table.matrix td.cell[data-n] { cursor: default; }
             </button>
         </div>
 
+        <div class="graph-toolbar" style="padding-top:7px;padding-bottom:7px">
+            <span style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted);font-weight:700">Показывать</span>
+            <div class="type-filter" id="type-filter"></div>
+            <span class="graph-hint" id="type-hint"></span>
+        </div>
+
         <div class="graph-body">
             <div class="graph-canvas-wrap">
                 <div id="cy"></div>
@@ -945,6 +969,8 @@ const APP = {
     issues: [],
     health: null,
     activeSheet: null,
+    typeFilter: null,   // какие типы объектов показывать на графе
+    userLayout: false,  // выбирал ли раскладку человек (тогда не переключаем сами)
 };
 
 /* ───────────────────────── мелкие утилиты ───────────────────────── */
@@ -2160,16 +2186,22 @@ function runAudit(books, graph) {
 
         /* ─── КРИТИЧНО ─── */
 
-        // #REF! внутри формул — ссылка указывает в никуда
+        // #REF! внутри формул — ссылка указывает в никуда.
+        // Счёт ведём по errKinds (полный), а примеры — по errorCells (усечённый список):
+        // иначе большие книги показывали бы 200 вместо настоящих сотен.
         const refItems = [];
-        sheets.forEach(sh => (sh.errorCells || []).forEach(c => {
-            if (c.err === '#REF!' && refItems.length < 200) refItems.push({ loc: loc(sh.name, c.cell), txt: c.f || c.err });
-        }));
+        let refTotal = 0;
+        sheets.forEach(sh => {
+            (sh.errKinds || new Map()).forEach((cnt, e) => { if (e === '#REF!') refTotal += cnt; });
+            (sh.errorCells || []).forEach(c => {
+                if (c.err === '#REF!' && refItems.length < 200) refItems.push({ loc: loc(sh.name, c.cell), txt: c.f || c.err });
+            });
+        });
         add({ id: 'ref-broken', category: 'Ошибки', severity: 'critical',
             title: 'Ссылки #REF! в формулах',
             desc: 'Формула ссылается на удалённый лист, строку или колонку.',
             why: 'Это <strong>уже сломано</strong>: значение не считается и тянет ошибку вверх по всей цепочке. Обычно появляется после удаления листа или столбца, на который кто-то ссылался.',
-            count: refItems.length, items: refItems });
+            count: refTotal, items: refItems });
 
         // Прочие ошибки в ячейках
         const errAgg = new Map();
@@ -2495,6 +2527,8 @@ async function loadFiles(fileList) {
 
     logLine('ok', 'Строю граф связей…');
     await nextFrame();
+    APP.typeFilter = null;                        // новая книга — пересобираем фильтр типов
+    APP.userLayout = false;
     APP.graph  = buildGraph(APP.books);
     deriveInvisibleEdges(APP.graph, APP.books);   // догадки по INDIRECT("Лист!A1")
     APP.issues = runAudit(APP.books, APP.graph);
@@ -2650,6 +2684,7 @@ function renderOverview() {
 /* ─────────────── ЛИСТЫ И ТАБЛИЦЫ ─────────────── */
 
 let sheetSort = { key: 'formulas', dir: -1 };
+const NAMES_SHOWN = 500;   // в боевых книгах имён бывают тысячи, все в DOM не нужны
 
 function sheetRows() {
     const rows = [];
@@ -2719,7 +2754,10 @@ function renderSheets() {
 
     const allNames = [];
     APP.books.forEach(b => (b.names || []).filter(n => !n.builtin).forEach(n => allNames.push(n)));
-    $('#names-tbody').innerHTML = allNames.map(n =>
+    // Сначала сломанные, потом неиспользуемые, потом рабочие: наверху то, ради чего сюда пришли
+    allNames.sort((a, b) => (b.broken - a.broken) || ((a.uses === 0) - (b.uses === 0)) * -1 || String(a.name).localeCompare(String(b.name), 'ru'));
+    const namesShown = allNames.slice(0, NAMES_SHOWN);
+    $('#names-tbody').innerHTML = namesShown.map(n =>
         '<tr><td><strong>' + esc(n.name) + '</strong></td>' +
         '<td>' + esc(n.scope) + '</td>' +
         '<td class="mono" style="font-size:11px;overflow-wrap:anywhere">' + esc(n.ref) + '</td>' +
@@ -2727,7 +2765,10 @@ function renderSheets() {
         '<td>' + (n.broken ? '<span class="pill pill-red">сломан</span>'
                 : n.uses === 0 ? '<span class="pill pill-amber">не используется</span>'
                 : '<span class="pill pill-green">в работе</span>') + '</td></tr>'
-    ).join('') || '<tr><td colspan="5" class="empty-state">Именованных диапазонов нет</td></tr>';
+    ).join('') + (allNames.length > NAMES_SHOWN
+        ? '<tr><td colspan="5" class="muted" style="text-align:center;padding:12px">показаны первые ' +
+          NAMES_SHOWN + ' из ' + fmtNum(allNames.length) + ' — сначала сломанные и неиспользуемые. Полный список — в выгрузке JSON</td></tr>'
+        : '') || '<tr><td colspan="5" class="empty-state">Именованных диапазонов нет</td></tr>';
 }
 
 /** Тепловая карта листа: каждый пиксель — ячейка (или группа при больших листах). */
@@ -3041,6 +3082,7 @@ function renderModel() {
 /* ─────────────── КАЧЕСТВО ─────────────── */
 
 let sevFilter = 'all';
+const ISSUE_ITEMS_SHOWN = 200;   // больше в DOM класть незачем — счётчик остаётся полным
 
 function renderQuality() {
     const counts = { all: APP.issues.length };
@@ -3070,9 +3112,10 @@ function renderQuality() {
         '</div>' +
         '<div class="issue-body">' +
         '<div class="issue-why">' + iss.why + '</div>' +
-        (iss.items.length ? '<div class="issue-items">' + iss.items.map(it =>
+        (iss.items.length ? '<div class="issue-items">' + iss.items.slice(0, ISSUE_ITEMS_SHOWN).map(it =>
             '<div class="issue-item"><span class="ii-loc">' + esc(it.loc) + '</span><span class="ii-txt">' + esc(it.txt) + '</span></div>').join('') +
-            '</div>' + (iss.count > iss.items.length ? '<div class="muted" style="margin-top:7px;font-size:11.5px">показаны первые ' + iss.items.length + ' из ' + fmtNum(iss.count) + '</div>' : '')
+            '</div>' + (iss.count > Math.min(iss.items.length, ISSUE_ITEMS_SHOWN)
+                ? '<div class="muted" style="margin-top:7px;font-size:11.5px">показаны первые ' + Math.min(iss.items.length, ISSUE_ITEMS_SHOWN) + ' из ' + fmtNum(iss.count) + '</div>' : '')
             : '') +
         '</div></div>').join('')
         : '<div class="card"><div class="empty-state">По этому уровню важности находок нет.</div></div>';
@@ -3212,11 +3255,18 @@ function cyElements() {
     const showOrphans = $('#opt-orphans').checked;
     const showInvisible = $('#opt-invisible').checked;
 
-    const edges = APP.graph.edges.filter(e => showInvisible || e.type !== 'invisible');
+    const typeOk = n => n.isParent || !APP.typeFilter || APP.typeFilter.has(n.type);
+    const allowed = new Set(APP.graph.nodes.filter(typeOk).map(n => n.id));
+
+    const edges = APP.graph.edges.filter(e =>
+        (showInvisible || e.type !== 'invisible') && allowed.has(e.source) && allowed.has(e.target));
+    // Степень считаем уже по отфильтрованным рёбрам: иначе лист, связанный только
+    // со скрытым типом, останется висеть в графе как «не одиночный»
     const deg = new Map();
     edges.forEach(e => { deg.set(e.source, (deg.get(e.source) || 0) + 1); deg.set(e.target, (deg.get(e.target) || 0) + 1); });
 
     const nodes = APP.graph.nodes.filter(n => {
+        if (!typeOk(n)) return false;
         if (n.isParent) return groups;
         if (!showOrphans && !deg.get(n.id)) return false;
         return true;
@@ -3251,6 +3301,12 @@ const LAYOUTS = {
 };
 let currentLayout = 'dagre-lr';
 
+/* Раскладка «Потоком» показывает направление данных и читается идеально, пока узлов
+   немного. На 56 листах она вытягивается в 4200px по вертикали — зум падает до 0.14,
+   и вместо структуры получается волосок. Поэтому на больших графах стартуем
+   с силовой раскладки (она укладывается в экран), но выбор пользователя не трогаем. */
+const FLOW_LAYOUT_LIMIT = 35;
+
 function renderGraph() {
     const holder = $('#cy');
     if (!window.cytoscape) {
@@ -3266,9 +3322,26 @@ function renderGraph() {
 
     if (window.__cy) { window.__cy.destroy(); window.__cy = null; }
 
+    buildTypeFilter(false);
     const els = cyElements();
     $('#graph-empty').hidden = els.length > 0;
     if (!els.length) { $('#graph-empty').textContent = 'Нечего показывать: все объекты отфильтрованы.'; return; }
+
+    const nodeCount = els.filter(e => !e.data.source).length;
+    let layoutNote = '';
+    if (!APP.userLayout) {
+        if (nodeCount > FLOW_LAYOUT_LIMIT) {
+            currentLayout = 'cose';
+            layoutNote = 'объектов много — включена раскладка «Кластерами», «Потоком →» покажет направление данных на выбранном узле';
+        } else if (window.__dagreRegistered) {
+            currentLayout = 'dagre-lr';
+        }
+        $$('.seg [data-layout]').forEach(b => b.classList.toggle('active', b.dataset.layout === currentLayout));
+    }
+    if (layoutNote) {
+        const h = $('#type-hint');
+        h.textContent = h.textContent ? h.textContent + ' · ' + layoutNote : layoutNote;
+    }
 
     const cy = cytoscape({
         container: holder,
@@ -3436,8 +3509,40 @@ function showNodeDetails(id, upSet, downSet) {
         extra;
 }
 
+/**
+ * Фильтр по типам объектов.
+ * В книгах с историей именованных диапазонов бывают сотни (видели 500 уникальных
+ * при 3272 битых записях). На графе они превращают структуру в клубок и топят
+ * те самые листы, ради которых сюда пришли, — поэтому при большом количестве
+ * прячем их сразу, но показываем, что скрыли и сколько.
+ */
+const TYPE_ORDER = ['sheet', 'table', 'query', 'source', 'pivot', 'measure', 'name', 'extbook'];
+const NOISY_LIMIT = 60;
+
+function buildTypeFilter(reset) {
+    const counts = {};
+    APP.graph.nodes.forEach(n => { if (!n.isParent) counts[n.type] = (counts[n.type] || 0) + 1; });
+
+    if (reset || !APP.typeFilter) {
+        const on = new Set(Object.keys(counts));
+        if ((counts.name || 0) > NOISY_LIMIT) on.delete('name');
+        APP.typeFilter = on;
+    }
+
+    $('#type-filter').innerHTML = TYPE_ORDER.filter(t => counts[t]).map(t =>
+        '<button class="tchip' + (APP.typeFilter.has(t) ? ' on' : '') + '" data-type="' + t + '"' +
+        ' style="--c:' + NODE_TYPES[t].color + '" title="Показать/скрыть: ' + esc(NODE_TYPES[t].label) + '">' +
+        '<span class="tchip-dot"></span>' + esc(NODE_TYPES[t].label) + ' <b>' + counts[t] + '</b></button>').join('');
+
+    const hiddenTypes = Object.keys(counts).filter(t => !APP.typeFilter.has(t));
+    const hiddenCount = hiddenTypes.reduce((a, t) => a + counts[t], 0);
+    $('#type-hint').textContent = hiddenCount
+        ? 'скрыто ' + fmtNum(hiddenCount) + ' объектов, чтобы граф читался — включите чипом'
+        : '';
+}
+
 function buildLegend() {
-    const used = new Set(APP.graph.nodes.map(n => n.type));
+    const used = new Set(APP.graph.nodes.filter(n => !APP.typeFilter || APP.typeFilter.has(n.type)).map(n => n.type));
     $('#lg-items').innerHTML = Object.entries(NODE_TYPES)
         .filter(([k]) => used.has(k) && k !== 'book')
         .map(([, v]) => '<span class="lg-item"><span class="lg-swatch" style="background:' + v.color + '"></span>' + esc(v.label) + '</span>')
@@ -3543,10 +3648,18 @@ function initEvents() {
     $$('.seg [data-layout]').forEach(b => b.onclick = () => {
         $$('.seg [data-layout]').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
+        APP.userLayout = true;          // выбрал человек — больше не переключаем автоматически
         currentLayout = b.dataset.layout;
         if (window.__cy) window.__cy.layout(LAYOUTS[currentLayout]).run();
     });
     ['#opt-groups', '#opt-orphans', '#opt-invisible'].forEach(sel => { $(sel).onchange = renderGraph; });
+    $('#type-filter').addEventListener('click', e => {
+        const chip = e.target.closest('.tchip');
+        if (!chip) return;
+        const t = chip.dataset.type;
+        if (APP.typeFilter.has(t)) APP.typeFilter.delete(t); else APP.typeFilter.add(t);
+        renderGraph();
+    });
     $('#btn-graph-fit').onclick   = () => { if (window.__cy) window.__cy.fit(undefined, 40); };
     $('#btn-graph-reset').onclick = () => { clearFocus(); if (window.__cy) window.__cy.layout(LAYOUTS[currentLayout]).run(); };
     $('#btn-graph-png').onclick   = () => {
