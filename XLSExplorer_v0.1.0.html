@@ -335,9 +335,35 @@ tr.row-link { cursor: pointer; }
     max-height: 264px; overflow-y: auto; padding: 4px;
 }
 .gs-list[hidden] { display: none; }
-.gs-opt { padding: 7px 10px; border-radius: 7px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.graph-search input { padding-right: 30px; }
+.gs-caret {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer; color: var(--text-muted);
+    padding: 3px; display: flex; border-radius: 5px; transition: transform .2s, color .15s;
+}
+.gs-caret:hover { color: var(--primary); }
+.gs-caret svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2.2; fill: none; display: block; }
+.graph-search.open .gs-caret { transform: translateY(-50%) rotate(180deg); }
+
+.gs-list { max-height: 360px; min-width: 340px; width: max-content; max-width: min(460px, calc(100vw - 60px)); }
+.gs-group {
+    position: sticky; top: 0; z-index: 1; background: var(--card);
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px 4px; font-size: 10px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted);
+    border-bottom: 1px solid var(--border-light); margin-bottom: 2px;
+}
+.gs-group .gs-count { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+.gs-opt {
+    padding: 6px 10px; border-radius: 7px; cursor: pointer;
+    display: flex; align-items: center; gap: 8px; font-size: 13px;
+}
 .gs-opt:hover, .gs-opt.active { background: var(--primary-light); }
-.gs-opt .gs-type { font-size: 10px; text-transform: uppercase; letter-spacing: .3px; color: var(--text-muted); font-weight: 700; margin-left: auto; }
+.gs-opt .gs-body { min-width: 0; flex: 1; }
+.gs-opt .gs-name { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-opt .gs-loc { display: block; font-size: 10.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-opt mark { background: #fde68a; color: inherit; border-radius: 2px; padding: 0 1px; }
+.gs-more { padding: 5px 10px 8px; font-size: 11px; color: var(--text-muted); }
 
 .type-filter { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
 .tchip {
@@ -405,6 +431,15 @@ tr.row-link { cursor: pointer; }
 }
 .gd-head { padding: 13px 15px; border-bottom: 1px solid var(--border-light); display: flex; align-items: flex-start; gap: 9px; }
 .gd-head .gd-title { font-size: 14px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; flex: 1; }
+.gd-where {
+    display: flex; align-items: center; gap: 5px; margin-top: 6px; padding: 4px 8px;
+    border-radius: 6px; background: var(--primary-light); color: var(--primary-dark);
+    font-size: 11.5px; font-weight: 600; cursor: pointer;
+}
+.gd-where:hover { filter: brightness(.97); }
+.gd-where.is-model { background: #cffafe; color: #155e75; cursor: default; }
+.gd-where svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2; fill: none; flex-shrink: 0; }
+.gd-where .mono { font-weight: 700; }
 .gd-head .gd-close { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 2px; line-height: 1; font-size: 18px; }
 .gd-body { padding: 13px 15px; overflow-y: auto; flex: 1; font-size: 13px; }
 .gd-section { margin-bottom: 15px; }
@@ -492,8 +527,8 @@ tr.row-link { cursor: pointer; }
 .issue-icon { width: 19px; height: 19px; flex-shrink: 0; margin-top: 1px; color: var(--sev-color); }
 .issue-icon svg { width: 100%; height: 100%; stroke: currentColor; stroke-width: 2; fill: none; }
 .issue-main { flex: 1; min-width: 0; }
-.issue-title { font-size: 13.5px; font-weight: 700; margin-bottom: 2px; }
-.issue-desc { font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
+.issue-title { display: block; font-size: 13.5px; font-weight: 700; margin-bottom: 2px; }
+.issue-desc { display: block; font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
 .issue-count { font-family: 'JetBrains Mono', monospace; font-weight: 800; font-size: 15px; color: var(--sev-color); flex-shrink: 0; }
 .issue-chevron { flex-shrink: 0; color: var(--text-muted); transition: transform .2s; }
 .issue-chevron svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2.4; fill: none; display: block; }
@@ -502,6 +537,17 @@ tr.row-link { cursor: pointer; }
 .issue.open .issue-body { display: block; }
 .issue-why { font-size: 12.5px; color: var(--text-secondary); background: #f8fafc; border-radius: 7px; padding: 9px 11px; margin-bottom: 10px; line-height: 1.6; }
 .issue-why strong { color: var(--text); }
+/* Рекомендация: диагноз без лечения бесполезен */
+.issue-fix {
+    font-size: 12.5px; color: #065f46; background: var(--success-light); border: 1px solid #a7f3d0;
+    border-radius: 7px; padding: 9px 11px; margin-bottom: 10px; line-height: 1.65;
+}
+.issue-fix .fix-label {
+    display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    font-weight: 800; color: #047857; margin-bottom: 4px;
+}
+.issue-fix b { color: #064e3b; }
+.issue-fix .mono { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; background: rgba(6,95,70,.08); padding: 1px 4px; border-radius: 3px; }
 .issue-items { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; }
 .issue-item {
     display: flex; align-items: baseline; gap: 9px; font-size: 12px; padding: 5px 9px;
@@ -732,8 +778,12 @@ table.matrix td.cell[data-n] { cursor: default; }
         <div class="graph-toolbar">
             <div class="graph-search">
                 <span class="gs-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
-                <input type="text" id="graph-search-input" placeholder="Найти лист, таблицу, запрос…" autocomplete="off" aria-label="Поиск по графу">
-                <div class="gs-list" id="graph-search-list" hidden></div>
+                <input type="text" id="graph-search-input" placeholder="Выбрать или найти объект…" autocomplete="off"
+                       role="combobox" aria-expanded="false" aria-controls="graph-search-list" aria-label="Выбор объекта на графе">
+                <button class="gs-caret" id="graph-search-caret" aria-label="Показать все объекты" tabindex="-1">
+                    <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="gs-list" id="graph-search-list" role="listbox" hidden></div>
             </div>
             <div class="seg" role="group" aria-label="Раскладка графа">
                 <button data-layout="dagre-lr" class="active" title="Слои слева направо: источники → запросы → листы">Потоком →</button>
@@ -1004,6 +1054,13 @@ function unesc(s) {
 }
 
 const fmtNum = n => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString('ru-RU');
+
+/** Русское склонение: 1 формула, 2 формулы, 5 формул. */
+function plural(num, forms) {
+    const a = Math.abs(num) % 100, b = a % 10;
+    const i = (a > 10 && a < 20) ? 2 : (b > 1 && b < 5) ? 1 : (b === 1) ? 0 : 2;
+    return fmtNum(num) + ' ' + forms[i];
+}
 
 /** У длинного пути значим хвост — имя файла, а не начало каталога. */
 function shortPath(p, max) {
@@ -2311,6 +2368,18 @@ function buildGraph(books) {
         });
     });
 
+    /* ── что физически лежит на листе (таблицы, сводные).
+          Связь «contains» — не поток данных, а размещение: таблица находится НА листе.
+          Но влияние листа идёт именно через неё: если умная таблица с листа «Расчет по КП»
+          кормит другой лист, то и сам лист на него влияет. Без этого лист с таблицей
+          выглядит тупиком, и его можно принять за кандидата на удаление. */
+    const hostedBy = new Map();
+    edges.filter(e => e.type === 'contains').forEach(e => {
+        if (!hostedBy.has(e.target)) hostedBy.set(e.target, []);
+        hostedBy.get(e.target).push(e.source);
+    });
+    nodes.forEach(n => { if (hostedBy.has(n.id)) n.hosted = hostedBy.get(n.id); });
+
     /* ── степень связности и роль листа в потоке данных */
     nodes.forEach(n => { n.inDeg = 0; n.outDeg = 0; });
     edges.forEach(e => {
@@ -2320,8 +2389,12 @@ function buildGraph(books) {
     });
     nodes.forEach(n => {
         if (n.type !== 'sheet') return;
-        const up = edges.filter(e => e.target === n.id && e.type !== 'contains').length;
-        const down = edges.filter(e => e.source === n.id && e.type !== 'contains').length;
+        // Роль считаем по листу ВМЕСТЕ с тем, что на нём лежит
+        const seeds = [n.id].concat(n.hosted || []);
+        const inSeeds = id => seeds.indexOf(id) !== -1;
+        const flow = edges.filter(e => e.type !== 'contains');
+        const up   = flow.filter(e => inSeeds(e.target) && !inSeeds(e.source)).length;
+        const down = flow.filter(e => inSeeds(e.source) && !inSeeds(e.target)).length;
         n.role = (!up && !down) ? 'изолирован' : (!up ? 'вход' : (!down ? 'выход' : 'расчёт'));
         if (n.ref) n.ref.role = n.role;
     });
@@ -2340,6 +2413,33 @@ const SEV = {
     critical: { label: 'Критично', color: '#dc2626', weight: 14 },
     major:    { label: 'Важно',    color: '#f59e0b', weight: 6  },
     minor:    { label: 'Заметка',  color: '#3b82f6', weight: 2  },
+};
+
+/**
+ * Что делать с находкой. Конкретные шаги в терминах самого Excel — иначе список
+ * находок остаётся диагнозом без лечения.
+ */
+const FIX_HINTS = {
+    'ref-broken': 'Пройдите по адресам из списка. Если диапазон существует — перепишите ссылку; если источник удалён навсегда — замените формулу константой или уберите её. Массово искать: <b>Ctrl+H → найти «#REF!»</b>. После правки — <b>Ctrl+Alt+F9</b> (полный пересчёт).',
+    'cell-errors': '<b>#ДЕЛ/0!</b> — проверьте знаменатель, оберните в <span class="mono">ЕСЛИ(знаменатель=0;"";…)</span>. <b>#Н/Д</b> в ВПР — либо штатное «нет данных» (тогда <span class="mono">ЕСЛИОШИБКА</span>), либо не совпадают типы ключа: число против текста. <b>#ЗНАЧ!</b> — аргумент не того типа. <b>#ИМЯ?</b> — опечатка в имени функции или диапазона. Не заворачивайте всё подряд в ЕСЛИОШИБКА: так ошибка прячется, а не чинится.',
+    'names-broken': 'Откройте <b>Диспетчер имён (Ctrl+F3)</b>, отсортируйте по столбцу «Диапазон» и удалите записи с #REF! — либо переназначьте на действующий диапазон. Перед удалением сверьтесь с колонкой «Использований» на вкладке «Листы и таблицы».',
+    'calc-manual': '<b>Формулы → Параметры вычислений → Автоматически</b>, затем <b>F9</b> и сохраните. Если ручной режим стоит намеренно из-за скорости — напишите об этом прямо на первом листе, иначе следующий человек примет устаревшие числа за актуальные.',
+    'ext-local': 'Перенесите файлы-источники на общий сетевой ресурс или SharePoint и переподключите: <b>Данные → Изменить связи → Изменить</b>. Надёжнее — втянуть данные внутрь книги через Power Query, тогда путь останется только в одном месте (в параметре запроса).',
+    'col-gap': 'Сравните вбитое значение с формулой соседних строк. Если правка обоснована — вынесите её в отдельную колонку «корректировка», а формулу восстановите: тогда исключение будет видно, переживёт протягивание и не потеряется при пересчёте.',
+    'invisible-links': 'Замените <span class="mono">ДВССЫЛ/INDIRECT</span> и <span class="mono">СМЕЩ/OFFSET</span> на прямые ссылки, <span class="mono">ИНДЕКС</span> или структурированные ссылки умных таблиц. Если динамика действительно нужна — оставьте, но задокументируйте: при переименовании листа такая формула ломается молча, и ни граф, ни сам Excel этого не покажут.',
+    'volatile': '<span class="mono">ТДАТА/СЕГОДНЯ</span> вынесите в одну служебную ячейку и ссылайтесь на неё. <span class="mono">СМЕЩ</span> замените на <span class="mono">ИНДЕКС</span>. Если книга всё равно тормозит — на время правок переключите пересчёт в ручной режим (не забыв вернуть обратно).',
+    'whole-col': 'Замените <span class="mono">A:A</span> на умную таблицу (<b>Ctrl+T</b>) или на явный диапазон. Формулы по таблице расширяются сами и не перебирают миллион пустых строк.',
+    'hidden-sheets': 'Обычные скрытые: правой кнопкой по ярлыку листа → <b>Показать</b>. Для <b>veryHidden</b> нужен редактор VBA (<b>Alt+F11</b>, у листа свойство <span class="mono">Visible = xlSheetVisible</span>). Служебные листы стоит называть с общим префиксом, чтобы следующий человек сразу понимал их назначение.',
+    'dead-queries': '<b>Данные → Запросы и подключения</b>, правой кнопкой по запросу → <b>Удалить</b>. Сначала убедитесь, что он не используется как функция или параметр другими запросами. Если удалять жалко — снимите галку «Обновлять при обновлении всех», чтобы он не тратил время.',
+    'orphan-sheets': 'Проверьте, не читают ли данные с листа вручную или макросом — граф этого не видит. Если нет, лист можно вынести в архивный файл. Перед удалением сделайте копию книги.',
+    'unused-names': '<b>Диспетчер имён (Ctrl+F3)</b> → выделите и удалите. Список полей станет короче, книга — легче. Имена с префиксом <span class="mono">_xlfn</span> и <span class="mono">_xlnm</span> служебные, их не трогайте.',
+    'ghost-range': 'Выделите строки ниже данных и столбцы правее (<b>Ctrl+Shift+↓</b> / <b>→</b>) и нажмите <b>Удалить</b> — именно удалить, не «Очистить». Затем сохраните и переоткройте книгу: диапазон пересчитается.',
+    'vba': '<b>Alt+F11</b> — посмотрите модули. Если макросы не нужны, сохраните книгу как <span class="mono">.xlsx</span>: код исчезнет вместе с предупреждением безопасности при открытии.',
+    'protection': '<b>Рецензирование → Снять защиту листа</b>. Пароль в файле не хранится в открытом виде — если он утерян, лист придётся пересоздать копированием содержимого на новый.',
+    'iterative': '<b>Файл → Параметры → Формулы</b> → снимите «Включить итеративные вычисления», затем <b>Формулы → Проверка ошибок → Циклические ссылки</b> покажет, где цикл. Если цикл нужен по смыслу расчёта — зафиксируйте предельное число итераций и относительную погрешность и опишите это в книге.',
+    'privacy': '<b>Файл → Сведения → Поиск проблем → Инспектор документов</b> → «Свойства документа и персональные данные» → Удалить. Делайте это на копии: операция необратима.',
+    'long-formula': 'Разбейте формулу на промежуточные колонки или вынесите повторяющиеся куски в <span class="mono">ЛЕТ()</span> / <span class="mono">LAMBDA</span>. Проверить и поправить такую формулу станет физически возможно.',
+    'idle-measures': '<b>Power Pivot → Управление</b> → область мер. Ненужные удалите, нужные, но служебные, пометьте «Скрыть из клиентских средств» — они перестанут мешать в списке полей, но продолжат работать внутри других мер.',
 };
 
 function runAudit(books, graph) {
@@ -2385,7 +2485,7 @@ function runAudit(books, graph) {
 
         // Битые именованные диапазоны — тихий убийца
         const brokenNames = (book.names || []).filter(n => n.broken)
-            .map(n => ({ loc: pre + n.name, txt: n.ref }));
+            .map(n => ({ loc: pre + n.name, txt: 'область: ' + n.scope + '  ·  ' + n.ref }));
         add({ id: 'names-broken', category: 'Ошибки', severity: 'critical',
             title: 'Сломанные именованные диапазоны',
             desc: 'Имя ссылается на #REF!.',
@@ -2501,7 +2601,7 @@ function runAudit(books, graph) {
 
         // Неиспользуемые имена
         const unusedNames = (book.names || []).filter(n => !n.builtin && !n.broken && n.uses === 0)
-            .map(n => ({ loc: pre + n.name, txt: n.ref }));
+            .map(n => ({ loc: pre + n.name, txt: 'область: ' + n.scope + '  ·  ' + n.ref }));
         add({ id: 'unused-names', category: 'Гигиена', severity: 'minor',
             title: 'Именованные диапазоны, которые нигде не используются',
             desc: 'Имя объявлено, но не встречается ни в одной формуле.',
@@ -2804,7 +2904,7 @@ function renderBadges() {
     const major = APP.issues.filter(i => i.severity === 'major').length;
     set('#badge-sheets', totalSheets);
     set('#badge-pq', totalQ || null);
-    set('#badge-graph', APP.graph.nodes.length);
+    // #badge-graph заполняет renderGraph: там известно, сколько узлов реально видно
     set('#badge-quality', crit || major || null, crit ? 'bad' : 'warn');
     $('#sidebar-file').textContent = APP.books.length === 1 ? APP.books[0].fileName : APP.books.length + ' книги';
 }
@@ -3025,11 +3125,12 @@ function showSheetDetail(bookIdx, name) {
     }
 
     const node = APP.graph.index.get('s:' + bookIdx + ':' + name);
-    const upstream   = APP.graph.edges.filter(e => e.target === (node || {}).id);
-    const downstream = APP.graph.edges.filter(e => e.source === (node || {}).id);
+    // Лист вместе с тем, что на нём лежит: иначе лист с умной таблицей выглядит тупиком
+    const seeds = new Set([(node || {}).id].concat((node || {}).hosted || []));
+    const upstream   = APP.graph.edges.filter(e => e.type !== 'contains' && seeds.has(e.target) && !seeds.has(e.source));
+    const downstream = APP.graph.edges.filter(e => e.type !== 'contains' && seeds.has(e.source) && !seeds.has(e.target));
     const nm = id => (APP.graph.index.get(id) || {}).label || id;
-    const self = (node || {}).id;
-    const uniq = (edges, side) => Array.from(new Set(edges.map(e => e[side]))).filter(x => x !== self).map(nm);
+    const uniq = (edges, side) => Array.from(new Set(edges.map(e => e[side]))).filter(x => !seeds.has(x)).map(nm);
     const upNames = uniq(upstream, 'source');
     const downNames = uniq(downstream, 'target');
 
@@ -3040,6 +3141,8 @@ function showSheetDetail(bookIdx, name) {
         '<strong>констант:</strong> ' + fmtNum(sh.constCount) + ' &nbsp;·&nbsp; ' +
         '<strong>текста:</strong> ' + fmtNum(sh.textCount) + ' &nbsp;·&nbsp; ' +
         '<strong>ошибок:</strong> ' + fmtNum(sh.errorCount) + '<br>' +
+        (((node || {}).hosted || []).length
+            ? '<strong>На листе лежит:</strong> ' + esc(node.hosted.map(nm).join(', ')) + '<br>' : '') +
         '<strong>Объединённых ячеек:</strong> ' + fmtNum(sh.merged || 0) +
         ' &nbsp;·&nbsp; <strong>условное форматирование:</strong> ' + fmtNum(sh.condFmt || 0) +
         ' &nbsp;·&nbsp; <strong>проверка данных:</strong> ' + fmtNum(sh.dataValid || 0) + '<br><br>' +
@@ -3365,6 +3468,7 @@ function renderQuality() {
         '</div>' +
         '<div class="issue-body">' +
         '<div class="issue-why">' + iss.why + '</div>' +
+        (FIX_HINTS[iss.id] ? '<div class="issue-fix"><span class="fix-label">Что делать</span>' + FIX_HINTS[iss.id] + '</div>' : '') +
         (iss.items.length ? '<div class="issue-items">' + iss.items.slice(0, ISSUE_ITEMS_SHOWN).map(it =>
             '<div class="issue-item"><span class="ii-loc">' + esc(it.loc) + '</span><span class="ii-txt">' + esc(it.txt) + '</span></div>').join('') +
             '</div>' + (iss.count > Math.min(iss.items.length, ISSUE_ITEMS_SHOWN)
@@ -3455,6 +3559,10 @@ function buildMarkdown() {
         L.push('');
         L.push('> ' + i.why.replace(/<[^>]+>/g, ''));
         L.push('');
+        if (FIX_HINTS[i.id]) {
+            L.push('**Что делать:** ' + FIX_HINTS[i.id].replace(/<[^>]+>/g, ''));
+            L.push('');
+        }
         i.items.slice(0, 25).forEach(it => L.push('- `' + it.loc + '` ' + it.txt));
         if (i.count > 25) L.push('- … и ещё ' + (i.count - 25));
         L.push('');
@@ -3667,6 +3775,12 @@ function focusNode(id) {
 
     cy.elements().addClass('faded').removeClass('hl-node hl-up hl-down');
 
+    // Лист «раскрывается» вместе со своими таблицами и сводными: данные уходят
+    // с листа через них, и без этого лист выглядел бы тупиком.
+    const meta = APP.graph.index.get(id) || {};
+    const seeds = [id].concat((meta.hosted || []).filter(h => cy.getElementById(h).length));
+    const seedSet = new Set(seeds);
+
     const up = new Set(), down = new Set(), upE = [], downE = [];
     const walk = (start, dir, seen, edgeAcc) => {
         const stack = [start];
@@ -3680,17 +3794,17 @@ function focusNode(id) {
             });
         }
     };
-    walk(id, 'up', up, upE);
-    walk(id, 'down', down, downE);
-    up.delete(id); down.delete(id);   // цикл через имя/лист — не повод показывать узел самому себе
+    seeds.forEach(sd => { walk(sd, 'up', up, upE); walk(sd, 'down', down, downE); });
+    seedSet.forEach(sd => { up.delete(sd); down.delete(sd); });   // сам узел и его содержимое — не «связи»
 
     node.removeClass('faded').addClass('hl-node');
+    seedSet.forEach(sd => cy.getElementById(sd).removeClass('faded'));
     up.forEach(n => cy.getElementById(n).removeClass('faded'));
     down.forEach(n => cy.getElementById(n).removeClass('faded'));
     upE.forEach(e => e.removeClass('faded').addClass('hl-up'));
     downE.forEach(e => e.removeClass('faded').addClass('hl-down'));
 
-    showNodeDetails(id, up, down);
+    showNodeDetails(id, up, down, seeds.slice(1));
 }
 
 function clearFocus() {
@@ -3698,14 +3812,30 @@ function clearFocus() {
     $('#graph-details').hidden = true;
 }
 
-function showNodeDetails(id, upSet, downSet) {
+function showNodeDetails(id, upSet, downSet, hosted) {
     const n = APP.graph.index.get(id);
     if (!n) return;
     const type = NODE_TYPES[n.type] || { label: n.type, color: '#64748b' };
 
+    // Где объект физически находится. Без этого «Таблица1» и «Сводная таблица1»
+    // неотличимы друг от друга: имена в книгах повторяются десятками.
+    const whereSheet = n.sheet || (n.ref || {}).sheet || null;
+    const whereRange = (n.ref || {}).ref || (n.ref || {}).location || null;
+    let where = '';
+    if (whereSheet) {
+        where = '<div class="gd-where" data-focus-node="' + esc('s:' + n.bookIdx + ':' + whereSheet) + '">' +
+            '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>' +
+            'на листе «' + esc(whereSheet) + '»' +
+            (whereRange ? ' <span class="mono">' + esc(whereRange) + '</span>' : '') + '</div>';
+    } else if (n.type === 'modeltable' || n.type === 'measure') {
+        where = '<div class="gd-where is-model">' +
+            '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/></svg>' +
+            'в модели данных, не на листе</div>';
+    }
+
     $('#graph-details').hidden = false;
     $('#gd-title').innerHTML = '<span class="pill" style="background:' + type.color + '22;color:' + type.color + '">' +
-        esc(type.label) + '</span><br>' + esc(n.label);
+        esc(type.label) + '</span><br>' + esc(n.label) + where;
 
     const kv = [];
     const r = n.ref || {};
@@ -3766,8 +3896,14 @@ function showNodeDetails(id, upSet, downSet) {
     $('#gd-body').innerHTML =
         (kv.length ? '<div class="gd-section"><h4>Свойства</h4><dl class="gd-kv">' +
             kv.map(x => '<dt>' + esc(x[0]) + '</dt><dd>' + esc(x[1]) + '</dd>').join('') + '</dl></div>' : '') +
+        ((hosted || []).length
+            ? '<div class="gd-section"><h4>На этом листе лежит</h4>' + linkList(new Set(hosted), '') +
+              '<div class="muted" style="font-size:11px;margin-top:5px">Связи этих объектов учтены ниже как связи листа.</div></div>'
+            : '') +
         '<div class="gd-section"><h4>Берёт данные из (' + upSet.size + ')</h4>' + linkList(upSet, 'Ни от чего не зависит — это источник.') + '</div>' +
-        '<div class="gd-section"><h4>Влияет на (' + downSet.size + ')</h4>' + linkList(downSet, 'Ничего от него не зависит — тупик.') + '</div>' +
+        '<div class="gd-section"><h4>Влияет на (' + downSet.size + ')</h4>' + linkList(downSet,
+            n.type === 'sheet' ? 'Ничего не читает данные с этого листа — ни напрямую, ни через таблицы на нём.'
+                               : 'Ничего от него не зависит — тупик.') + '</div>' +
         (downSet.size ? '<div class="gd-section"><h4>Анализ влияния</h4><div class="issue-why" style="margin:0">' +
             'Если удалить этот объект, пострадает <strong>' + downSet.size + '</strong> ' +
             'связанных объектов вниз по цепочке.</div></div>' : '') +
@@ -3874,13 +4010,22 @@ function initEvents() {
         const focus = e.target.closest('[data-focus-node]');
         if (focus) {
             const id = focus.dataset.focusNode;
-            goPage('graph');
+            const meta = APP.graph.index.get(id);
+            // Выбрали объект скрытого типа — логичнее включить этот тип, чем отказать
+            if (meta && APP.typeFilter && !APP.typeFilter.has(meta.type)) {
+                APP.typeFilter.add(meta.type);
+                goPage('graph');
+                renderGraph();
+                showNotification('Включён показ: ' + ((NODE_TYPES[meta.type] || {}).label || meta.type), 'info', 3500);
+            } else {
+                goPage('graph');
+            }
             setTimeout(() => {
                 if (!window.__cy) return;
                 const n = window.__cy.getElementById(id);
                 if (n && n.length) { window.__cy.animate({ center: { eles: n }, zoom: 1.4 }, { duration: 320 }); focusNode(id); }
-                else showNotification('Этот объект скрыт текущими фильтрами графа', 'info', 4000);
-            }, 90);
+                else showNotification('Этот объект отфильтрован: включите его тип или снимите фильтр одиночных узлов', 'info', 5000);
+            }, 260);
             return;
         }
 
@@ -3935,20 +4080,99 @@ function initEvents() {
         document.body.appendChild(a); a.click(); a.remove();
     };
 
-    /* поиск по графу */
+    /* ── выбор объекта: список с группировкой по типам, поиск фильтрует его же.
+          Одного поиска мало: чтобы что-то найти, надо знать, что искать. */
     const si = $('#graph-search-input'), sl = $('#graph-search-list');
-    si.oninput = () => {
-        const q = si.value.trim().toLowerCase();
-        if (!q) { sl.hidden = true; return; }
-        const hits = APP.graph.nodes.filter(n => !n.isParent && n.label.toLowerCase().indexOf(q) !== -1).slice(0, 20);
-        sl.innerHTML = hits.length
-            ? hits.map(n => '<div class="gs-opt" data-focus-node="' + esc(n.id) + '">' +
-                '<span class="lg-swatch" style="background:' + ((NODE_TYPES[n.type] || {}).color || '#94a3b8') + '"></span>' +
-                esc(n.label) + '<span class="gs-type">' + esc((NODE_TYPES[n.type] || {}).label || n.type) + '</span></div>').join('')
-            : '<div class="combo-empty" style="padding:12px;text-align:center;color:var(--text-muted);font-size:12px">Ничего не найдено</div>';
+    const wrap = si.closest('.graph-search');
+    const PER_GROUP = 40;
+
+    /** Где объект лежит — вторая строка в списке. «Таблица1» без листа бесполезна. */
+    function nodeLocation(n) {
+        const sheet = n.sheet || (n.ref || {}).sheet;
+        if (sheet) return 'лист «' + sheet + '»';
+        if (n.type === 'sheet')  return (n.role ? n.role + ', ' : '') + plural((n.ref || {}).formulaCount || 0, ['формула', 'формулы', 'формул']);
+        if (n.type === 'query')  return (n.ref || {}).isParameter ? 'параметр' : plural(((n.ref || {}).steps || []).length, ['шаг', 'шага', 'шагов']);
+        if (n.type === 'modeltable' || n.type === 'measure') return 'модель данных';
+        if (n.type === 'extbook') return n.fullPath || '';
+        if (n.type === 'source')  return n.srcLabel || '';
+        if (n.type === 'name')    return (n.ref || {}).ref || '';
+        return '';
+    }
+
+    function renderPicker(query) {
+        const q = String(query || '').trim().toLowerCase();
+        const shown = APP.typeFilter;
+        const groups = [];
+        TYPE_ORDER.forEach(t => {
+            let list = APP.graph.nodes.filter(n => !n.isParent && n.type === t);
+            if (q) list = list.filter(n => (n.label + ' ' + nodeLocation(n)).toLowerCase().indexOf(q) !== -1);
+            if (list.length) groups.push({ type: t, list });
+        });
+        if (!groups.length) {
+            sl.innerHTML = '<div class="gs-more" style="text-align:center;padding:14px">Ничего не найдено</div>';
+            return;
+        }
+        const hi = txt => {
+            const e = esc(txt);
+            if (!q) return e;
+            const i = e.toLowerCase().indexOf(q);
+            return i === -1 ? e : e.slice(0, i) + '<mark>' + e.slice(i, i + q.length) + '</mark>' + e.slice(i + q.length);
+        };
+        sl.innerHTML = groups.map(g => {
+            const meta = NODE_TYPES[g.type] || {};
+            const off = shown && !shown.has(g.type);
+            return '<div class="gs-group"><span class="lg-swatch" style="background:' + meta.color + '"></span>' +
+                esc(meta.label || g.type) + (off ? ' <span style="color:var(--warning)">(скрыт на графе)</span>' : '') +
+                '<span class="gs-count">' + g.list.length + '</span></div>' +
+                g.list.slice(0, PER_GROUP).map(n => {
+                    const loc = nodeLocation(n);
+                    return '<div class="gs-opt" role="option" data-focus-node="' + esc(n.id) + '">' +
+                        '<span class="lg-swatch" style="background:' + meta.color + '"></span>' +
+                        '<span class="gs-body"><span class="gs-name">' + hi(n.label) + '</span>' +
+                        (loc ? '<span class="gs-loc">' + hi(loc) + '</span>' : '') + '</span></div>';
+                }).join('') +
+                (g.list.length > PER_GROUP ? '<div class="gs-more">…и ещё ' + (g.list.length - PER_GROUP) + ' — уточните поиск</div>' : '');
+        }).join('');
+    }
+
+    function openPicker() {
+        renderPicker(si.value);
         sl.hidden = false;
+        wrap.classList.add('open');
+        si.setAttribute('aria-expanded', 'true');
+    }
+    function closePicker() {
+        sl.hidden = true;
+        wrap.classList.remove('open');
+        si.setAttribute('aria-expanded', 'false');
+        $$('.gs-opt.active', sl).forEach(x => x.classList.remove('active'));
+    }
+
+    si.oninput = openPicker;
+    si.onfocus = openPicker;
+    si.onblur = () => setTimeout(closePicker, 180);
+    $('#graph-search-caret').onmousedown = e => {
+        e.preventDefault();
+        if (sl.hidden) { si.focus(); openPicker(); } else closePicker();
     };
-    si.onblur = () => setTimeout(() => { sl.hidden = true; }, 180);
+    si.onkeydown = e => {
+        if (e.key === 'Escape') { closePicker(); si.blur(); return; }
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
+        const opts = $$('.gs-opt', sl);
+        if (!opts.length) return;
+        const cur = opts.findIndex(x => x.classList.contains('active'));
+        if (e.key === 'Enter') {
+            if (cur >= 0) { e.preventDefault(); opts[cur].click(); closePicker(); si.blur(); }
+            return;
+        }
+        e.preventDefault();
+        const next = e.key === 'ArrowDown'
+            ? Math.min(opts.length - 1, cur + 1)
+            : Math.max(0, (cur < 0 ? opts.length : cur) - 1);
+        opts.forEach(x => x.classList.remove('active'));
+        opts[next].classList.add('active');
+        opts[next].scrollIntoView({ block: 'nearest' });
+    };
 
     /* экспорт */
     $('#btn-export-md').onclick = () => download('xls-explorer-passport.md', buildMarkdown(), 'text/markdown');
