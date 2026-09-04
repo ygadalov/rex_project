@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.1.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -315,7 +315,14 @@ tr.row-link { cursor: pointer; }
 
 <style>
 /* ═══════════════════ ГРАФ СВЯЗЕЙ ═══════════════════ */
-.graph-shell { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 12px; }
+.graph-shell {
+    display: flex; flex-direction: column; gap: 12px; min-height: 0;
+    /* Определённая высота (не flex:1) — иначе панель деталей с длинным списком
+       растягивает всю страницу, и легенда уезжает за нижний край экрана.
+       flex: none обязателен: при flex:1 базис 0 перебил бы height. */
+    flex: none;
+    height: clamp(460px, calc(100vh - 160px), 1100px);
+}
 .graph-toolbar {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     background: var(--card); padding: 9px 12px; border-radius: var(--radius);
@@ -409,7 +416,7 @@ tr.row-link { cursor: pointer; }
     border-radius: var(--radius); box-shadow: var(--shadow); border: 1px solid var(--border-light);
     overflow: hidden;
 }
-#cy { width: 100%; height: 100%; min-height: 420px; }
+#cy { width: 100%; height: 100%; min-height: 0; }
 .graph-empty {
     position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
     justify-content: center; gap: 8px; color: var(--text-muted); font-size: 13px; text-align: center;
@@ -466,21 +473,25 @@ tr.row-link { cursor: pointer; }
 .lg-mrow .lg-mfrom { font-weight: 700; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; }
 .lg-mrow .lg-mto { color: var(--text-muted); }
 
-/* Подсказка прямо на связи: прочитать линию проще, чем сверяться с легендой */
+/* Подсказка на связи: только название типа и вес. Развёрнутое объяснение
+   живёт в легенде — в тултипе оно превращалось в тяжёлый абзац под курсором. */
 .cy-tip {
-    position: absolute; z-index: 40; pointer-events: none; max-width: 280px;
-    background: var(--sidebar-bg); color: #f8fafc; border-radius: 8px;
-    padding: 7px 10px; font-size: 11.5px; line-height: 1.5; box-shadow: var(--shadow-lg);
-    transform: translate(-50%, calc(-100% - 10px));
+    position: absolute; z-index: 40; pointer-events: none; white-space: nowrap;
+    background: rgba(255,255,255,.97); color: var(--text);
+    border: 1px solid var(--border); border-radius: 7px;
+    padding: 3px 8px; font-size: 11px; font-weight: 600; line-height: 1.5;
+    box-shadow: 0 2px 8px rgba(15,23,42,.12);
+    transform: translate(-50%, calc(-100% - 12px));
 }
-.cy-tip b { color: #93c5fd; }
-.cy-tip .tip-hint { display: block; color: #cbd5e1; font-size: 10.5px; margin-top: 3px; }
+.cy-tip .tip-line { display: inline-block; width: 14px; border-top-width: 2px; vertical-align: middle; margin-right: 5px; }
+.cy-tip .tip-num { color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 10.5px; margin-left: 4px; }
 
 /* Панель деталей узла */
 .graph-details {
     width: 316px; flex-shrink: 0; background: var(--card); border-radius: var(--radius);
     box-shadow: var(--shadow); border: 1px solid var(--border-light);
     display: flex; flex-direction: column; overflow: hidden;
+    max-height: 100%;   /* содержимое прокручивается внутри, а не распирает холст */
 }
 .gd-head { padding: 13px 15px; border-bottom: 1px solid var(--border-light); display: flex; align-items: flex-start; gap: 9px; }
 .gd-head .gd-title { font-size: 14px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; flex: 1; }
@@ -516,7 +527,10 @@ tr.row-link { cursor: pointer; }
 .gd-empty { color: var(--text-muted); font-size: 12px; font-style: italic; }
 
 @media (max-width: 900px) {
-    .graph-body { flex-direction: column; }
+    /* На узком экране колонкой: высоту отдаём содержимому, но панель ограничиваем */
+    .graph-shell { height: auto; }
+    .graph-body { flex-direction: column; height: auto; }
+    .graph-canvas-wrap { min-height: 340px; }
     .graph-details { width: 100%; max-height: 46vh; }
 }
 
@@ -1082,7 +1096,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.1';
+const APP_VERSION = '1.1.1';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3802,7 +3816,7 @@ function renderGraph() {
     if (!APP.userLayout) {
         if (nodeCount > FLOW_LAYOUT_LIMIT) {
             currentLayout = 'cose';
-            layoutNote = 'объектов много — включена раскладка «Кластерами», «Потоком →» покажет направление данных на выбранном узле';
+            layoutNote = 'много объектов — раскладка «Кластерами»';
         } else if (window.__dagreRegistered) {
             currentLayout = 'dagre-lr';
         }
@@ -3877,26 +3891,15 @@ function renderGraph() {
     };
     cy.on('mouseover', 'edge', evt => {
         const e = evt.target, t = e.data('type');
-        const v = EDGE_TYPES[t] || { label: t, hint: '', color: '#94a3b8' };
+        const v = EDGE_TYPES[t] || { label: t, color: '#94a3b8', dash: 'solid' };
         const cnt = e.data('count') || 1;
         showTip(evt.renderedPosition || e.midpoint(),
-            '<b style="color:' + v.color + '">' + esc(v.label) + '</b>' +
-            (cnt > 1 ? ' · ' + fmtNum(cnt) + ' ' + (t === 'ref' ? 'ссылок' : 'связей') : '') +
-            '<br>' + esc(e.source().data('label')) + ' → ' + esc(e.target().data('label')) +
-            '<span class="tip-hint">' + esc(v.hint) + '</span>');
+            '<span class="tip-line" style="border-top-style:' + v.dash + ';border-top-color:' + v.color + '"></span>' +
+            esc(v.label) + (cnt > 1 ? '<span class="tip-num">×' + fmtNum(cnt) + '</span>' : ''));
         e.addClass('edge-hl');
     });
     cy.on('mouseout', 'edge', evt => { tip.hidden = true; evt.target.removeClass('edge-hl'); });
-    cy.on('mouseover', 'node', evt => {
-        const nd = APP.graph.index.get(evt.target.id());
-        if (!nd) return;
-        const meta = NODE_TYPES[nd.type] || {};
-        const loc = nd.sheet || (nd.ref || {}).sheet;
-        showTip(evt.renderedPosition || evt.target.renderedPosition(),
-            '<b>' + esc(nd.label) + '</b><span class="tip-hint">' + esc(meta.label || nd.type) +
-            (loc ? ' · на листе «' + loc + '»' : '') + '</span>');
-    });
-    cy.on('mouseout', 'node', () => { tip.hidden = true; });
+    // Подсказки на узлах не делаем: у них есть подпись, а клик открывает панель
     cy.on('pan zoom drag', () => { tip.hidden = true; });
 
     window.__cy = cy;
@@ -4060,7 +4063,8 @@ function showNodeDetails(id, upSet, downSet, hosted, relUp, relDown) {
         (kv.length ? '<div class="gd-section"><h4>Свойства</h4><dl class="gd-kv">' +
             kv.map(x => '<dt>' + esc(x[0]) + '</dt><dd>' + esc(x[1]) + '</dd>').join('') + '</dl></div>' : '') +
         ((hosted || []).length
-            ? '<div class="gd-section"><h4>На этом листе лежит</h4>' + linkList(new Set(hosted), '') +
+            ? '<div class="gd-section"><h4>На этом листе лежит</h4>' +
+              linkList(new Set(hosted), '', new Map(hosted.map(h => [h, new Set(['contains'])]))) +
               '<div class="muted" style="font-size:11px;margin-top:5px">Связи этих объектов учтены ниже как связи листа.</div></div>'
             : '') +
         '<div class="gd-section"><h4>Берёт данные из (' + upSet.size + ')</h4>' +
@@ -4120,7 +4124,7 @@ function buildTypeFilter(reset) {
     });
 
     const parts = [];
-    if (hiddenCount) parts.push('скрыто ' + fmtNum(hiddenCount) + ' объектов, чтобы граф читался — включите чипом');
+    if (hiddenCount) parts.push('скрыто ' + fmtNum(hiddenCount) + ' — включите чипом');
     $('#type-hint').innerHTML = parts.join(' · ');
 
     const warn = $('#type-warn');
