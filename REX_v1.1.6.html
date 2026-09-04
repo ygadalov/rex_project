@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.1.5 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.1.6 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1125,7 +1125,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.1.5';
+const APP_VERSION = '1.1.6';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3870,7 +3870,8 @@ function renderGraph() {
                 'border-width': 2, 'border-color': '#fff',
                 'text-background-color': '#fff', 'text-background-opacity': .8,
                 'text-background-padding': 2, 'text-background-shape': 'roundrectangle',
-                'transition-property': 'opacity, border-color', 'transition-duration': '160ms',
+                'transition-property': 'opacity, border-color, width, height, font-size',
+                'transition-duration': '220ms',
             }},
             { selector: 'node[warn = 1]',   style: { 'border-color': '#dc2626', 'border-width': 3 } },
             { selector: 'node[hidden = 1]', style: { 'border-style': 'dashed', 'border-color': '#94a3b8', 'opacity': .78 } },
@@ -3905,14 +3906,19 @@ function renderGraph() {
             // Объявлено ПОСЛЕ .faded намеренно: в cytoscape побеждает последнее
             // правило, иначе погашенную связь нельзя рассмотреть наведением.
             { selector: 'edge.edge-hl', style: { 'width': 4, 'opacity': 1, 'z-index': 20 } },
+            // Выбранный узел — центр разбора, поэтому он крупнее всего остального
+            // примерно вдвое. Размер не спорит с цветом связей: это другой канал.
             { selector: '.hl-node', style: {
-                'border-color': '#ffffff', 'border-width': 3,
-                'underlay-color': '#0f172a', 'underlay-opacity': .92, 'underlay-padding': 7,
-                'width': 42, 'height': 34, 'z-index': 40,
-                'font-size': 13, 'font-weight': 800, 'color': '#ffffff',
+                'border-color': '#ffffff', 'border-width': 4,
+                'underlay-color': '#0f172a', 'underlay-opacity': .92, 'underlay-padding': 9,
+                'width': 58, 'height': 48, 'z-index': 40,
+                'font-size': 14, 'font-weight': 800, 'color': '#ffffff',
                 'text-background-color': '#0f172a', 'text-background-opacity': 1,
-                'text-background-padding': 4, 'text-margin-y': 9,
+                'text-background-padding': 5, 'text-margin-y': 11, 'text-max-width': 150,
             } },
+            // Прямые соседи — второй уровень: заметно крупнее фона, но меньше центра.
+            { selector: 'node.hl-near', style: { 'width': 34, 'height': 30, 'z-index': 25, 'font-weight': 700 } },
+            { selector: 'node.hl-near[type = "sheet"]', style: { 'width': 42, 'height': 32 } },
             // Пока выбран объект, цвет линии означает НАПРАВЛЕНИЕ, а не тип.
             // Это допустимо только потому, что легенда в этот момент переключается
             // и говорит об этом прямо. Полупрозрачные ореолы на десятках линий
@@ -3989,7 +3995,7 @@ function focusNode(id) {
     const node = cy.getElementById(id);
     if (!node || !node.length) return;
 
-    cy.elements().addClass('faded').removeClass('hl-node hl-up hl-down hl-self');
+    cy.elements().addClass('faded').removeClass('hl-node hl-up hl-down hl-self hl-near');
 
     // Лист «раскрывается» вместе со своими таблицами и сводными: данные уходят
     // с листа через них, и без этого лист выглядел бы тупиком.
@@ -4035,6 +4041,11 @@ function focusNode(id) {
     upE.forEach(e => e.removeClass('faded').addClass(inSeeds(e) ? 'hl-self' : 'hl-up'));
     downE.forEach(e => e.removeClass('faded').addClass(inSeeds(e) ? 'hl-self' : 'hl-down'));
 
+    // Три уровня размера дают ощущение центра: выбранный → прямые соседи → остальные
+    upE.concat(downE).forEach(e => {
+        [e.source(), e.target()].forEach(nd => { if (!seedSet.has(nd.id())) nd.addClass('hl-near'); });
+    });
+
     showNodeDetails(id, up, down, seeds.slice(1), relUp, relDown);
 }
 
@@ -4042,6 +4053,7 @@ function clearFocus() {
     window.__focusSeeds = null;
     const lg = $('#graph-legend');
     if (lg) { lg.classList.remove('focus-mode'); $('#lg-focus').hidden = true; }
+    if (window.__cy) window.__cy.elements().removeClass('hl-near');
     if (typeof setPickerValue === 'function') setPickerValue('');
     if (window.__cy) window.__cy.elements().removeClass('faded hl-node hl-up hl-down hl-self');
     $('#graph-details').hidden = true;
