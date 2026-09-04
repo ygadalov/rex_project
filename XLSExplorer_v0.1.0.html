@@ -1451,6 +1451,55 @@ function scanSheetXml(xml, sheet) {
     });
 }
 
+/**
+ * Метаданные Power Pivot из частей customXml с namespace gemini/pivotcustomization.
+ * Сама модель лежит в xl/model/item.data — это сжатый бэкап движка, и выражения
+ * DAX со связями оттуда не достать. Но состояние интерфейса Power Pivot Excel
+ * сохраняет рядом обычным XML, и в нём видно то, что действительно полезно:
+ *   • namespace TableXML_<Имя>_<guid>  → таблицы модели
+ *   • ColumnWidths                     → их колонки
+ *   • <MeasureName> в CalculatedFields → имена мер
+ * Это не «весь Power Pivot», но это факты, а не догадки.
+ */
+function parseGeminiModel(zip) {
+    const tables = new Map();      // имя таблицы → Set колонок
+    const measures = new Map();    // имя меры → { name, display }
+
+    Object.keys(zip).forEach(path => {
+        if (!/^customXml\/item\d+\.xml$/i.test(path)) return;
+        const s = decodePart(zip[path]);
+        if (s.indexOf('gemini/pivotcustomization') === -1) return;
+
+        const nsM = /pivotcustomization\/TableXML_([\s\S]*?)"/.exec(s);
+        if (nsM) {
+            // хвост вида _e2a71c8f-1c38-4818-a644-4bf5f8b12ce8 — это guid, не часть имени
+            const name = nsM[1].replace(/_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, '');
+            if (name) {
+                if (!tables.has(name)) tables.set(name, new Set());
+                const cols = tables.get(name);
+                let m;
+                const reCol = /<key><string>([^<]*)<\/string><\/key>/g;
+                while ((m = reCol.exec(s)) !== null) if (m[1]) cols.add(m[1]);
+            }
+        }
+
+        let m;
+        const reTable = /<TableName>([^<]+)<\/TableName>/g;
+        while ((m = reTable.exec(s)) !== null) if (!tables.has(m[1])) tables.set(m[1], new Set());
+
+        const reMeasure = /<MeasureName>([^<]*)<\/MeasureName>(?:<DisplayName>([^<]*)<\/DisplayName>)?/g;
+        while ((m = reMeasure.exec(s)) !== null) {
+            if (!m[1] || measures.has(m[1])) continue;
+            measures.set(m[1], { name: m[1], display: m[2] || m[1] });
+        }
+    });
+
+    return {
+        tables: Array.from(tables.entries()).map(([name, cols]) => ({ name, columns: Array.from(cols) })),
+        measures: Array.from(measures.values()),
+    };
+}
+
 /** Разбор книги формата OOXML (xlsx/xlsm/xltx, частично xlsb). */
 async function parseOOXML(bytes, book, log) {
     let zip;
@@ -1463,6 +1512,7 @@ async function parseOOXML(bytes, book, log) {
     const txt = p => has(p) ? decodePart(zip[p]) : null;
 
     book.zipEntries = Object.keys(zip).length;
+    book.gemini = parseGeminiModel(zip);
     book.vba = has('xl/vbaProject.bin');
     book.modelRaw = Object.keys(zip).find(k => /^xl\/model\/item\d*\.data$/.test(k)) || null;
     book.modelSize = book.modelRaw ? zip[book.modelRaw].length : 0;
@@ -1523,6 +1573,16 @@ async function parseOOXML(bytes, book, log) {
     const wbRels = txt('xl/_rels/workbook.xml.rels');
     if (wbRels) els(xmlDoc(wbRels), 'Relationship').forEach(r => {
         relMap.set(r.getAttribute('Id'), resolvePath('xl/', r.getAttribute('Target')));
+    });
+
+    /* cacheId сводной ссылается на <pivotCache cacheId="N" r:id="rIdX"/> в workbook.xml,
+       а не на порядковый номер файла pivotCacheDefinitionN.xml. Считать позицией в
+       массиве — значит связывать сводные не с теми кешами. */
+    book.cachePathById = new Map();
+    els(wbDoc, 'pivotCache').forEach(pc => {
+        const id = pc.getAttribute('cacheId');
+        const path = relMap.get(relId(pc));
+        if (id && path) book.cachePathById.set(id, path);
     });
 
     book.sheets = els(wbDoc, 'sheet').map((s, idx) => ({
@@ -1671,11 +1731,20 @@ async function parseOOXML(bytes, book, log) {
             const pt = els(xmlDoc(decodePart(zip[path])), 'pivotTableDefinition')[0];
             if (!pt) continue;
             const owner = book.sheets.find(s => (s.rels || []).some(r => r.target === path));
+            // Кеш перечисляет ВСЕ иерархии модели (доступность). Что реально положено
+            // в сводную — только здесь: hierarchyUsage для строк/колонок и fld для мер.
+            const hierUse = els(pt, 'rowHierarchyUsage').concat(els(pt, 'colHierarchyUsage'))
+                .map(x => parseInt(x.getAttribute('hierarchyUsage'), 10))
+                .filter(i => !isNaN(i) && i >= 0);
+            const dataFlds = els(pt, 'dataField')
+                .map(x => ({ fld: parseInt(x.getAttribute('fld'), 10), caption: x.getAttribute('name') || null }))
+                .filter(d => !isNaN(d.fld));
             book.pivots.push({
                 name: pt.getAttribute('name'),
                 cacheId: pt.getAttribute('cacheId'),
                 sheet: owner ? owner.name : null,
                 location: (els(pt, 'location')[0] || {}).getAttribute ? els(pt, 'location')[0].getAttribute('ref') : null,
+                hierUse, dataFlds,
             });
             if (owner) owner.pivots.push(pt.getAttribute('name'));
         }
@@ -2073,6 +2142,7 @@ const NODE_TYPES = {
     sheet:   { label: 'Лист',               color: '#2563eb', shape: 'round-rectangle' },
     name:    { label: 'Именованный диапазон', color: '#d97706', shape: 'tag' },
     pivot:   { label: 'Сводная таблица',    color: '#db2777', shape: 'diamond' },
+    modeltable: { label: 'Таблица модели',  color: '#0891b2', shape: 'octagon' },
     measure: { label: 'Мера модели',        color: '#4f46e5', shape: 'hexagon' },
 };
 
@@ -2086,6 +2156,16 @@ const EDGE_TYPES = {
     pivot:     { label: 'источник сводной', style: 'dashed' },
     invisible: { label: 'невидимая связь',  style: 'invisible' },
 };
+
+/** Кеш, на котором построена сводная. Адресация — через cacheId → r:id → путь. */
+function cacheOf(book, pivot) {
+    const path = (book.cachePathById || new Map()).get(String(pivot.cacheId));
+    if (path) {
+        const byPath = (book.pivotCaches || []).find(c => c.path === path);
+        if (byPath) return byPath;
+    }
+    return (book.pivotCaches || [])[+pivot.cacheId] || (book.pivotCaches || [])[0] || null;
+}
 
 function buildGraph(books) {
     const nodes = [];
@@ -2117,7 +2197,7 @@ function buildGraph(books) {
         const tid = n => 't:' + bi + ':' + n;
         const qid = n => 'q:' + bi + ':' + n;
         const nid = n => 'n:' + bi + ':' + n;
-        const pid = n => 'p:' + bi + ':' + n;
+        const pid = p => 'p:' + bi + ':' + (p.sheet || '') + ':' + p.name;
 
         (book.sheets || []).forEach(sh => addNode(sid(sh.name), 'sheet', sh.name, {
             parent: P, bookIdx: bi, state: sh.state, ref: sh,
@@ -2131,11 +2211,15 @@ function buildGraph(books) {
         (book.queries || []).forEach(q => addNode(qid(q.name), 'query', q.name, {
             parent: P, bookIdx: bi, ref: q, isFunction: q.isFunction,
         }));
-        (book.pivots || []).forEach(p => addNode(pid(p.name), 'pivot', p.name, {
+        (book.pivots || []).forEach(p => addNode(pid(p), 'pivot', p.name, {
             parent: P, bookIdx: bi, ref: p, sheet: p.sheet,
         }));
         (book.externalLinks || []).forEach(x => addNode('x:' + bi + ':' + x.index, 'extbook', x.path.split(/[\\/]/).pop() || x.index, {
             parent: P, bookIdx: bi, ref: x, fullPath: x.path,
+        }));
+        const mtid = nm => 'mt:' + bi + ':' + nm;
+        ((book.model || {}).tables || []).forEach(t => addNode(mtid(t.name), 'modeltable', t.name, {
+            parent: P, bookIdx: bi, ref: t,
         }));
 
         /* ── таблица лежит на листе */
@@ -2191,19 +2275,38 @@ function buildGraph(books) {
             });
         });
 
+        /* ── модель данных: запрос кормит одноимённую таблицу модели.
+              Признак загрузки именно в модель — подключение без Location. */
+        ((book.model || {}).tables || []).forEach(t => {
+            const q = (book.queries || []).find(x => tableKey(x.name) === tableKey(t.name));
+            if (q) addEdge(qid(q.name), mtid(t.name), 'load');
+        });
+
         /* ── сводные: откуда берут данные */
         (book.pivots || []).forEach(p => {
-            if (p.sheet && nodeIdx.has(sid(p.sheet))) addEdge(pid(p.name), sid(p.sheet), 'contains');
-            const cache = (book.pivotCaches || [])[+p.cacheId - 1] ||
-                          (book.pivotCaches || []).find((c, i) => String(i + 1) === String(p.cacheId));
+            if (p.sheet && nodeIdx.has(sid(p.sheet))) addEdge(pid(p), sid(p.sheet), 'contains');
+            const cache = cacheOf(book, p);
             if (!cache) return;
-            if (cache.sheet && nodeIdx.has(sid(cache.sheet))) addEdge(sid(cache.sheet), pid(p.name), 'pivot');
-            if (cache.ref && nodeIdx.has(tid(cache.ref)))     addEdge(tid(cache.ref), pid(p.name), 'pivot');
-            (cache.hierarchies || []).filter(h => h.measure).forEach(h => {
-                const nm = (h.caption || h.uniqueName).replace(/^\[Measures]\.\[?|\]$/g, '');
+            if (cache.sheet && nodeIdx.has(sid(cache.sheet))) addEdge(sid(cache.sheet), pid(p), 'pivot');
+            if (cache.ref && nodeIdx.has(tid(cache.ref)))     addEdge(tid(cache.ref), pid(p), 'pivot');
+            // Только то, что действительно положено в эту сводную: иначе получится
+            // «каждая таблица модели связана с каждой сводной» — красиво и неверно.
+            const refTables = new Set();
+            (p.hierUse || []).forEach(i => {
+                const h = (cache.hierarchies || [])[i];
+                const mm = h && /^\[([^\]]+)\]\./.exec(h.uniqueName || '');
+                if (mm && mm[1] !== 'Measures') refTables.add(mm[1]);
+            });
+            refTables.forEach(t => { if (nodeIdx.has(mtid(t))) addEdge(mtid(t), pid(p), 'pivot'); });
+
+            (p.dataFlds || []).forEach(d => {
+                const f = (cache.fields || [])[d.fld];
+                if (!f) return;
+                const nm = String(f).replace(/^\[Measures]\.\[?/, '').replace(/\]$/, '');
+                if (!isRealMeasure(nm)) return;
                 const mid = 'm:' + bi + ':' + nm;
-                addNode(mid, 'measure', nm, { parent: P, bookIdx: bi, uniqueName: h.uniqueName });
-                addEdge(mid, pid(p.name), 'pivot');
+                addNode(mid, 'measure', nm, { parent: P, bookIdx: bi, uniqueName: f, caption: d.caption });
+                addEdge(mid, pid(p), 'pivot');
             });
         });
     });
@@ -2387,6 +2490,15 @@ function runAudit(books, graph) {
 
         /* ─── ЗАМЕТКИ ─── */
 
+        // Меры, объявленные в модели, но не встреченные ни в одной сводной
+        const idleMeasures = ((book.model || {}).measures || []).filter(x => !x.used)
+            .map(x => ({ loc: pre + x.name, txt: 'не встречается ни в одной сводной таблице книги' }));
+        add({ id: 'idle-measures', category: 'Гигиена', severity: 'minor',
+            title: 'Меры модели, не используемые в отчётах',
+            desc: 'Мера объявлена в Power Pivot, но ни одна сводная её не показывает.',
+            why: 'Либо задел на будущее, либо остаток от прошлой версии отчёта. При разборе модели полезно понимать, какие меры реально работают, а какие просто занимают место в списке полей.',
+            count: idleMeasures.length, items: idleMeasures });
+
         // Неиспользуемые имена
         const unusedNames = (book.names || []).filter(n => !n.builtin && !n.broken && n.uses === 0)
             .map(n => ({ loc: pre + n.name, txt: n.ref }));
@@ -2517,26 +2629,67 @@ function linkQueries(book) {
 }
 
 /** Модель данных: всё, что вообще достижимо без запуска Excel. */
+/**
+ * Служебные меры Excel начинаются с двойного подчёркивания и мерами модели не являются:
+ *   __XL_Count qAR          — неявный счётчик строк, Excel заводит по одному на таблицу
+ *   __No measures defined   — заглушка для измерения без мер
+ * Неявные меры вроде «Число элементов в столбце …» оставляем: они реально в отчёте.
+ */
+const isRealMeasure = nm => !!nm && String(nm).trim() !== '' && !/^__/.test(String(nm).trim());
+
 function summarizeModel(book) {
     const measures = new Map();
     const tables = new Map();
+    const usedMeasures = new Set();    // подтверждено использование в сводных
+    const usedTables = new Set();
+    const clean = x => String(x || '').replace(/^\[Measures]\.\[?/, '').replace(/\]$/, '');
+
+    /* Что модель ПРЕДЛАГАЕТ — из кешей сводных. */
     (book.pivotCaches || []).forEach(pc => (pc.hierarchies || []).forEach(h => {
         const un = h.uniqueName || '';
         const m = /^\[([^\]]+)\]\.\[([^\]]+)\]/.exec(un);
         if (h.measure) {
-            const nm = (h.caption || un).replace(/^\[Measures]\.\[?/, '').replace(/\]$/, '');
-            if (!measures.has(nm)) measures.set(nm, { name: nm, uniqueName: un, table: m && m[1] !== 'Measures' ? m[1] : null });
+            const nm = clean(h.caption || un);
+            if (isRealMeasure(nm) && !measures.has(nm)) measures.set(nm, { name: nm, uniqueName: un, table: null });
         } else if (m && m[1] !== 'Measures') {
             if (!tables.has(m[1])) tables.set(m[1], { name: m[1], columns: new Set() });
             tables.get(m[1]).columns.add(m[2]);
         }
     }));
+
+    /* Что реально ПОЛОЖЕНО в отчёты — только из самих сводных.
+       Разница принципиальна: кеш перечисляет всю модель целиком. */
+    (book.pivots || []).forEach(p => {
+        const cache = cacheOf(book, p);
+        if (!cache) return;
+        (p.hierUse || []).forEach(i => {
+            const h = (cache.hierarchies || [])[i];
+            const m = h && /^\[([^\]]+)\]\./.exec(h.uniqueName || '');
+            if (m && m[1] !== 'Measures') usedTables.add(m[1]);
+        });
+        (p.dataFlds || []).forEach(d => {
+            const f = (cache.fields || [])[d.fld];
+            if (f && isRealMeasure(clean(f))) usedMeasures.add(clean(f));
+        });
+    });
+
+    /* Данные из состояния Power Pivot дополняют кеши сводных: там видны и те
+       таблицы с мерами, которые ни в один отчёт пока не попали. */
+    const g = book.gemini || { tables: [], measures: [] };
+    g.tables.forEach(t => {
+        if (!tables.has(t.name)) tables.set(t.name, { name: t.name, columns: new Set() });
+        t.columns.forEach(c => tables.get(t.name).columns.add(c));
+    });
+    g.measures.forEach(mm => {
+        if (isRealMeasure(mm.name) && !measures.has(mm.name)) measures.set(mm.name, { name: mm.name, uniqueName: null, table: null });
+    });
     book.model = {
         present: !!book.modelRaw,
         rawSize: book.modelSize || 0,
-        measures: Array.from(measures.values()),
-        tables: Array.from(tables.values()).map(t => ({ name: t.name, columns: Array.from(t.columns) })),
+        measures: Array.from(measures.values()).map(x => Object.assign({ used: usedMeasures.has(x.name) }, x)),
+        tables: Array.from(tables.values()).map(t => ({ name: t.name, columns: Array.from(t.columns), used: usedTables.has(t.name) })),
         connection: (book.connections || []).find(c => c.isModel) || null,
+        fromGemini: g.tables.length > 0 || g.measures.length > 0,
     };
 }
 
@@ -3113,35 +3266,51 @@ function renderModel() {
             return;
         }
 
+        const usedM = m.measures.filter(x => x.used).length;
         parts.push(
             '<div style="margin-bottom:14px">' +
             '<span class="confidence partial"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>' +
-            'частичные данные — ограничение формата</span></div>' +
+            'структура — да, выражения DAX и связи — нет</span></div>' +
             '<div class="issue-why" style="margin-bottom:16px">' +
-            'Модель данных хранится в <span class="mono">' + esc(b.modelRaw || 'xl/model/item.data') + '</span> (' + fmtBytes(m.rawSize) + ') — ' +
-            'это двоичный дамп движка xVelocity, а не XML. <strong>Выражения DAX и связи между таблицами оттуда в браузере ' +
-            'достать нельзя</strong>, и это ограничение формата, а не инструмента.<br><br>' +
-            'Ниже — то, что <strong>достоверно</strong> извлекается из кешей сводных таблиц: имена мер и полей, которые ' +
-            'реально используются в отчётах книги. Чтобы увидеть модель целиком (DAX, связи, направления фильтрации), ' +
-            'выгрузите её из самого Excel: <span class="mono">Power Pivot → Управление → Конструктор</span> или DAX Studio. ' +
-            'Импорт такой выгрузки — в планах следующей версии.</div>');
+            'Сама модель лежит в <span class="mono">' + esc(b.modelRaw || 'xl/model/item.data') + '</span> (' + fmtBytes(m.rawSize) + ') — ' +
+            'это сжатый бэкап движка xVelocity, а не XML. <strong>Выражения DAX и связи между таблицами оттуда в браузере ' +
+            'достать нельзя</strong>: это ограничение формата, а не инструмента.<br><br>' +
+            'Зато рядом Excel сохраняет состояние конструктора Power Pivot обычным XML — из него достоверно читаются ' +
+            '<strong>таблицы модели, их колонки и имена мер</strong>, включая те, что ещё не попали ни в один отчёт. ' +
+            'Всё, что ниже, — факты из файла, а не догадки.<br><br>' +
+            'Чтобы увидеть DAX и связи, выгрузите модель из самого Excel: ' +
+            '<span class="mono">Power Pivot → Управление</span> или DAX Studio.</div>');
 
-        parts.push('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">');
+        parts.push('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">');
 
         parts.push('<div><h4 style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:8px">' +
             'Таблицы модели (' + m.tables.length + ')</h4>' +
-            (m.tables.length ? '<div class="table-box"><table><thead><tr><th>Таблица</th><th>Используемые поля</th></tr></thead><tbody>' +
-                m.tables.map(t => '<tr><td><strong>' + esc(t.name) + '</strong></td><td class="muted" style="font-size:11.5px">' +
-                    esc(t.columns.slice(0, 10).join(', ')) + (t.columns.length > 10 ? '…' : '') + '</td></tr>').join('') +
-                '</tbody></table></div>'
-                : '<div class="empty-state">Ни одна сводная не обращается к таблицам модели.</div>') + '</div>');
+            (m.tables.length ? '<div class="table-box"><table><thead><tr><th>Таблица</th><th class="num-cell">Колонок</th><th>Роль в отчётах</th><th>Питается из</th></tr></thead><tbody>' +
+                m.tables.map(t => {
+                    const q = (b.queries || []).find(x => tableKey(x.name) === tableKey(t.name));
+                    return '<tr><td><strong>' + esc(t.name) + '</strong>' +
+                        '<div class="muted" style="font-size:11px;margin-top:2px">' +
+                        esc(t.columns.slice(0, 6).join(', ')) + (t.columns.length > 6 ? '…' : '') + '</div></td>' +
+                        '<td class="num-cell">' + (t.columns.length || '—') + '</td>' +
+                        // «Не в разрезах» — не то же самое, что «не используется»: в звёздной
+                        // схеме таблицы фактов участвуют в отчёте через меры, а не как поля.
+                        '<td>' + (t.used
+                            ? '<span class="pill pill-green">в строках/колонках</span>'
+                            : '<span class="pill pill-gray" title="Обычная роль таблицы фактов: она участвует в отчёте через меры, а не как разрез">не в разрезах</span>') + '</td>' +
+                        '<td>' + (q ? '<span class="pill pill-purple">запрос ' + esc(q.name) + '</span>'
+                                    : '<span class="muted">не из Power Query</span>') + '</td></tr>';
+                }).join('') + '</tbody></table></div>'
+                : '<div class="empty-state">Таблиц модели найти не удалось.</div>') + '</div>');
 
         parts.push('<div><h4 style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:8px">' +
-            'Меры (' + m.measures.length + ')</h4>' +
-            (m.measures.length ? '<div class="table-box"><table><thead><tr><th>Мера</th><th>Таблица</th></tr></thead><tbody>' +
-                m.measures.map(x => '<tr><td><strong>' + esc(x.name) + '</strong></td><td class="muted">' + esc(x.table || '—') + '</td></tr>').join('') +
+            'Меры (' + m.measures.length + ', в отчётах ' + usedM + ')</h4>' +
+            (m.measures.length ? '<div class="table-box"><table><thead><tr><th>Мера</th><th>В отчётах</th></tr></thead><tbody>' +
+                m.measures.slice().sort((x, y) => (y.used - x.used) || x.name.localeCompare(y.name, 'ru'))
+                    .map(x => '<tr><td><strong>' + esc(x.display || x.name) + '</strong></td>' +
+                        '<td>' + (x.used ? '<span class="pill pill-green">используется</span>'
+                                         : '<span class="pill pill-amber">не найдена</span>') + '</td></tr>').join('') +
                 '</tbody></table></div>'
-                : '<div class="empty-state">Мер, используемых в сводных, не найдено.</div>') + '</div>');
+                : '<div class="empty-state">Мер не найдено.</div>') + '</div>');
 
         parts.push('</div></div>');
     });
@@ -3149,7 +3318,7 @@ function renderModel() {
     /* сводные таблицы — они есть и без модели данных */
     const pivots = [];
     APP.books.forEach(b => (b.pivots || []).forEach(p => {
-        const cache = (b.pivotCaches || []).find((c, i) => String(i + 1) === String(p.cacheId)) || (b.pivotCaches || [])[0];
+        const cache = cacheOf(b, p);
         pivots.push({ book: b.fileName, name: p.name, sheet: p.sheet, location: p.location,
             src: cache ? (cache.sourceType === 'external' ? 'модель данных / внешнее подключение' : (cache.sheet ? 'лист ' + cache.sheet + (cache.ref ? ' (' + cache.ref + ')' : '') : '—')) : '—' });
     }));
@@ -3612,7 +3781,7 @@ function showNodeDetails(id, upSet, downSet) {
  * те самые листы, ради которых сюда пришли, — поэтому при большом количестве
  * прячем их сразу, но показываем, что скрыли и сколько.
  */
-const TYPE_ORDER = ['sheet', 'table', 'query', 'source', 'pivot', 'measure', 'name', 'extbook'];
+const TYPE_ORDER = ['sheet', 'table', 'query', 'source', 'modeltable', 'pivot', 'measure', 'name', 'extbook'];
 const NOISY_LIMIT = 60;
 
 function buildTypeFilter(reset) {
@@ -3658,7 +3827,7 @@ const CAPABILITIES = [
     ['Power Query: полный M-код',        'full', 'full', 'none'],
     ['Подключения и куда грузится запрос','full', 'part', 'none'],
     ['Сводные таблицы и их источники',   'full', 'part', 'part'],
-    ['Power Pivot: имена мер',           'part', 'part', 'none'],
+    ['Power Pivot: таблицы, колонки, меры','part', 'part', 'none'],
     ['Power Pivot: выражения DAX и связи','none', 'none', 'none'],
     ['Наличие макросов VBA',             'full', 'full', 'part'],
 ];
