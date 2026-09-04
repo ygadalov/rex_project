@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.1.6 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.1.7 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1125,7 +1125,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.1.6';
+const APP_VERSION = '1.1.7';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3972,10 +3972,47 @@ function renderGraph() {
         badge.textContent = fmtNum(nodeCount);
         badge.title = nodeCount < total ? 'показано ' + fmtNum(nodeCount) + ' из ' + fmtNum(total) + ' объектов' : '';
     }
-    cy.on('tap', 'node', evt => focusNode(evt.target.id()));
+    cy.on('tap', 'node', evt => {
+        focusNode(evt.target.id());
+        centerOnNode(evt.target);          // без зума: контекст у пользователя уже есть
+    });
     cy.on('tap', evt => { if (evt.target === cy) clearFocus(); });
 
     buildLegend();
+}
+
+/**
+ * Мягко подводит узел к центру холста.
+ *
+ * Только панорама, без изменения масштаба: зум при каждом клике сбивал бы
+ * ориентацию сильнее, чем помогал. Если узел и так близок к центру — не
+ * двигаем вовсе: движение ради движения раздражает больше, чем его отсутствие.
+ *
+ * opts.zoom — для переходов «издалека» (из списка, из панели, с другой
+ * вкладки): там контекста нет, и подъезд к узлу оправдан. Но и тогда
+ * масштаб только увеличивается, никогда не уменьшается.
+ */
+function centerOnNode(node, opts) {
+    const cy = window.__cy;
+    if (!cy || !node || !node.length) return;
+    // Панель деталей открывается в том же такте, что и центрирование, и сужает
+    // холст на свою ширину. Cytoscape держит размеры контейнера в кэше, поэтому
+    // без resize() он считает центр по старой ширине и промахивается ровно на
+    // половину панели.
+    cy.resize();
+    const ext = cy.extent();
+    const pos = node.position();
+    const offX = Math.abs(pos.x - (ext.x1 + ext.x2) / 2) / (ext.w / 2);
+    const offY = Math.abs(pos.y - (ext.y1 + ext.y2) / 2) / (ext.h / 2);
+    const wantZoom = opts && opts.zoom ? Math.max(cy.zoom(), 0.9) : null;
+    const needZoom = wantZoom && Math.abs(wantZoom - cy.zoom()) > 0.02;
+
+    // Уже практически в центре и масштаб менять не надо — оставляем вид как есть
+    if (offX < 0.22 && offY < 0.22 && !needZoom) return;
+
+    const anim = { center: { eles: node } };
+    if (needZoom) anim.zoom = wantZoom;
+    cy.animate(anim, { duration: 380, easing: 'ease-out-cubic' });
 }
 
 /** Показывает выбранный объект в поле фильтра (или очищает поле). */
@@ -4407,7 +4444,7 @@ function initEvents() {
             setTimeout(() => {
                 if (!window.__cy) return;
                 const n = window.__cy.getElementById(id);
-                if (n && n.length) { window.__cy.animate({ center: { eles: n }, zoom: 1.4 }, { duration: 320 }); focusNode(id); }
+                if (n && n.length) { focusNode(id); centerOnNode(n, { zoom: true }); }
                 else showNotification('Этот объект отфильтрован: включите его тип или снимите фильтр одиночных узлов', 'info', 5000);
             }, 260);
             return;
@@ -4437,6 +4474,17 @@ function initEvents() {
     });
 
     /* граф: панель, раскладки, фильтры */
+    /* Cytoscape не следит за размером своего контейнера сам. Холст меняет
+       ширину при открытии панели деталей и сворачивании меню — без этого
+       система координат остаётся от прежнего размера. */
+    if (window.ResizeObserver) {
+        let t = null;
+        new ResizeObserver(() => {
+            clearTimeout(t);
+            t = setTimeout(() => { if (window.__cy) window.__cy.resize(); }, 80);
+        }).observe($('.graph-canvas-wrap'));
+    }
+
     $('#gd-close').onclick = clearFocus;
     $('#lg-toggle').onclick = () => {
         const lg = $('#graph-legend');
