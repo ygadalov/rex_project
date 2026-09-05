@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.4.2 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.4.3 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1381,7 +1381,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.4.3';
 
 const APP = {
     books: [],          // разобранные книги
@@ -5044,7 +5044,7 @@ function renderColumns() {
             '<td><span class="col-pat">' + esc(String(top.sample || '').slice(0, 70)) +
                 (String(top.sample || '').length > 70 ? '…' : '') + '</span>' +
                 '<br><span class="col-share">' + Math.round(c.share * 100) + '% ячеек колонки</span></td>' +
-            '<td class="fx-chips">' + refChips(c.refs, 2) + '</td>' +
+            '<td><div class="fx-chips">' + refChips(c.refs, 2) + '</div></td>' +
             '<td class="col-gapcell">' + (c.gaps.length
                 ? c.gaps.slice(0, 4).map(r => c.letter + (r + 1)).join(', ') + (c.gaps.length > 4 ? ' и ещё ' + (c.gaps.length - 4) : '')
                 : '<span class="muted">—</span>') + '</td></tr>';
