@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.3.3 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.3.4 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -474,9 +474,11 @@ tr.row-link { cursor: pointer; }
 .lg-edge.off .lg-edge-name { text-decoration: line-through; }
 /* Общий образец связи. Светлый подслой нужен для бледных линий вроде
    «лежит на листе»: цвет остаётся честным, но на белом фоне остаётся виден. */
-/* Пара образцов одного цвета: сплошной и пунктирный */
-.edge-pair { flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+/* Пара образцов одного цвета: сплошной и пунктирный. Подпись стоит по центру
+   между ними — она относится к обеим линиям сразу, а не к верхней. */
+.edge-pair { flex-shrink: 0; display: flex; flex-direction: column; gap: 3px; }
 .edge-pair .edge-sample { margin-top: 0; }
+.lg-edge.is-static { align-items: center; }
 .edge-sample {
     flex-shrink: 0; display: block; margin-top: 3px;
     background: #f1f5f9; border-radius: 3px; padding: 1px 2px; box-sizing: content-box;
@@ -582,7 +584,7 @@ tr.row-link { cursor: pointer; }
 .lg-layer { display: flex; flex-direction: column; gap: 3px; }
 .lg-layer-title { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; color: var(--text-muted); }
 .lg-layer-types { display: flex; flex-wrap: wrap; gap: 4px; }
-.lg-flow-arrow { color: var(--border); font-size: 11px; line-height: 1; margin: 3px 0 3px 4px; }
+.lg-flow-arrow { color: var(--primary); font-size: 13px; font-weight: 700; line-height: 1; margin: 4px 0 4px 6px; }
 .lg-matrix { margin-top: 5px; display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; }
 .lg-mrow { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; line-height: 1.6; padding: 1px 0; }
 .lg-mrow .lg-mfrom { font-weight: 700; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; }
@@ -1314,7 +1316,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.3.3';
+const APP_VERSION = '1.3.4';
 
 const APP = {
     books: [],          // разобранные книги
@@ -5559,10 +5561,12 @@ function buildTypeFilter(reset) {
    книга и устроена, и по ней же легко понять, почему включённый тип не
    светится: его соседи по соседнему слою выключены. */
 const TYPE_LAYERS = [
-    { id: 'in',    title: 'Откуда берутся данные', types: ['source', 'extbook'] },
-    { id: 'proc',  title: 'Обработка',             types: ['query'] },
-    { id: 'store', title: 'Где лежат в книге',     types: ['sheet', 'table', 'name'] },
-    { id: 'out',   title: 'Что строится сверху',   types: ['pivot', 'modeltable', 'measure'] },
+    { id: 'in',    title: 'Источник данных',      types: ['source', 'extbook'] },
+    { id: 'proc',  title: 'Обработка данных',     types: ['query'] },
+    { id: 'store', title: 'Расположение в книге', types: ['sheet', 'table', 'name'] },
+    // Сводная агрегирует, мера считает, таблица модели хранит — общее у них
+    // одно: всё это построено поверх данных и показывается человеку.
+    { id: 'out',   title: 'Аналитика и отчётность', types: ['pivot', 'modeltable', 'measure'] },
 ];
 
 const NODE_GLYPHS = {
@@ -5664,7 +5668,8 @@ function buildLegend() {
        начертание остаётся прежним — оно по-прежнему про тип связи. Один
        сплошной образец заставлял думать, что пунктирные связи куда-то делись. */
     const focusRow = (color, text) =>
-        '<div class="lg-edge is-static">' +
+        '<div class="lg-edge is-static" title="Сплошная и пунктирная — одно и то же направление. ' +
+        'Начертание не меняется: оно по-прежнему показывает тип связи из списка ниже.">' +
         '<span class="edge-pair">' +
             edgeSample({ color, dash: 'solid',  arrow: true }, 30) +
             edgeSample({ color, dash: 'dashed', arrow: true }, 30) +
@@ -5676,9 +5681,7 @@ function buildLegend() {
         focusRow('#0d9488', 'ведёт к выбранному') +
         focusRow('#db2777', 'идёт от выбранного') +
         focusRow('#334155', 'внутри выбранного') +
-        '<div class="lg-focus-note">Сплошная и пунктирная означают одно и то же направление: ' +
-        'начертание не меняется, оно по-прежнему показывает <b>тип</b> связи из списка ниже. ' +
-        'Тип конкретной линии виден при наведении на неё. Снять выбор — × в поле фильтра.</div>';
+        '';
 
     /* ── пометки на узлах. Красная рамка была самым непонятным элементом графа:
           сигнал есть, а объяснения нет нигде. Показываем только то, что в книге
