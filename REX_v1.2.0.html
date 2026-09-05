@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.1.10 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.2.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -497,6 +497,26 @@ tr.row-link { cursor: pointer; }
 .lg-edge.is-static:hover { background: none; }
 .lg-focus-note { font-size: 10px; color: var(--text-muted); line-height: 1.45; padding: 2px 6px 0; font-weight: 500; }
 
+/* Очистка: группа мусора — строка с чекбоксом, риском и объяснением */
+.cl-groups { display: flex; flex-direction: column; gap: 6px; }
+.cl-group {
+    display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 9px; background: var(--card);
+    border-left: 3px solid var(--risk-color, var(--border));
+}
+.cl-group.is-locked { opacity: .72; background: var(--bg); }
+.cl-group input[type=checkbox] { margin-top: 2px; width: 15px; height: 15px; flex-shrink: 0; accent-color: var(--primary); }
+.cl-group input[type=checkbox]:disabled { cursor: not-allowed; }
+.cl-body { flex: 1; min-width: 0; }
+.cl-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cl-name { font-weight: 700; font-size: 13px; }
+.cl-risk { font-size: 10.5px; font-weight: 700; color: var(--risk-color); text-transform: uppercase; letter-spacing: .3px; }
+.cl-note { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin-top: 3px; }
+.cl-num { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; }
+.cl-opts { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light); font-size: 12px; }
+.cl-search { padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; font: inherit; font-size: 12px; min-width: 180px; background: var(--card); color: var(--text); }
+.cleanup-warn { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: #fef3c7; color: #92400e; font-size: 12px; line-height: 1.55; }
+
 .lg-sub { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-light); }
 .lg-more {
     background: none; border: none; padding: 0; cursor: pointer; font-family: inherit;
@@ -784,6 +804,12 @@ table.matrix td.cell[data-n] { cursor: default; }
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2.5 20.5 6v6c0 5.2-3.6 8.6-8.5 9.9C7.1 20.6 3.5 17.2 3.5 12V6z"/><path d="m9 12 2 2 4-4"/></svg></span>
             <span class="nav-label">Качество данных</span>
             <span class="nav-badge" id="badge-quality" hidden></span>
+        </button>
+
+        <button class="nav-item" data-page="cleanup" role="tab" aria-selected="false" aria-controls="page-cleanup" disabled>
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></span>
+            <span class="nav-label">Очистка книги</span>
+            <span class="nav-badge" id="badge-cleanup" hidden></span>
         </button>
 
         <div style="flex:1"></div>
@@ -1094,6 +1120,62 @@ table.matrix td.cell[data-n] { cursor: default; }
     <div id="quality-list"></div>
 </section>
 
+<!-- ═══════════ ОЧИСТКА ═══════════ -->
+<section class="page-content" id="page-cleanup" role="tabpanel">
+    <div class="header-top">
+        <h1 class="page-title">Очистка книги <span class="subtitle">что можно удалить и каким макросом</span></h1>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Почему это нельзя сделать руками</div>
+        <p class="muted" style="line-height:1.7;margin:0">
+            У «мусорных» имён стоит признак <code>hidden</code> — Excel не показывает их
+            в Диспетчере имён (Ctrl+F3) ни при каком фильтре, поэтому выделить и удалить их
+            нечем. Остаётся макрос. Удалять «всё скрытое» одной кнопкой опасно: среди скрытых
+            есть рабочие — служебные имена диаграмм, модель «Поиска решения», имена, на которых
+            держится условное форматирование. Поэтому ниже разбор по происхождению: выбираете
+            группы — REX собирает макрос под вашу книгу.
+        </p>
+        <div class="cleanup-warn" id="cleanup-empty" hidden></div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Что удалять <span class="hint" id="cleanup-sum"></span></div>
+        <div class="cl-groups" id="cleanup-groups"></div>
+        <div class="cl-opts">
+            <label class="chk" title="Первый запуск лучше делать так: макрос ничего не удаляет, а выписывает на отдельный лист, что собирался тронуть">
+                <input type="checkbox" id="opt-dryrun" checked> Сначала только отчёт, без удаления
+            </label>
+            <span class="muted" id="cleanup-protect"></span>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Макрос
+            <span class="hint">Alt+F11 → File → Import File…</span>
+            <span style="flex:1"></span>
+            <button class="btn btn-sm btn-outline" id="btn-macro-copy">Скопировать</button>
+            <button class="btn btn-sm btn-export" id="btn-macro-download">Скачать .bas</button>
+        </div>
+        <div class="code-box" id="cleanup-macro" style="max-height:46vh;overflow:auto;white-space:pre"></div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Скрытые имена целиком
+            <span class="hint" id="cleanup-list-note"></span>
+            <span style="flex:1"></span>
+            <input type="search" id="cleanup-search" class="cl-search" placeholder="поиск по имени или ссылке">
+            <button class="btn btn-sm btn-outline" id="btn-hidden-csv">CSV</button>
+        </div>
+        <div class="table-box">
+            <table class="wide">
+                <thead><tr><th>Имя</th><th>Группа</th><th>Ссылается на</th><th>Использований</th></tr></thead>
+                <tbody id="cleanup-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
 <!-- ═══════════ ОТЧЁТ ═══════════ -->
 <section class="page-content" id="page-report" role="tabpanel">
     <div class="header-top">
@@ -1143,7 +1225,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.1.10';
+const APP_VERSION = '1.2.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1155,6 +1237,8 @@ const APP = {
     edgeFilter: null,   // какие типы связей показывать (управляется легендой)
     userLayout: false,  // выбирал ли раскладку человек (тогда не переключаем сами)
     showHiddenNames: false, // показывать ли скрытые имена — по умолчанию нет, их бывают тысячи
+    cleanupGroups: null,    // разбор скрытых имён по происхождению
+    cleanupPick: null,      // какие группы человек выбрал к удалению
 };
 
 /* ───────────────────────── мелкие утилиты ───────────────────────── */
@@ -1494,6 +1578,56 @@ function resolvePath(base, target) {
 }
 
 /** Разбор одного листа. Индексный проход, а не регулярка: на 500 тыс. ячеек это принципиально. */
+/**
+ * Формулы живут не только в ячейках. Условное форматирование, проверка данных
+ * и ряды диаграмм тоже ссылаются на листы, таблицы и имена. Пока REX их не
+ * читал, он честно считал формулы — и при этом говорил «имя нигде не
+ * используется» про имя, на котором держится подсветка половины отчёта.
+ * Для вывода «удалять безопасно» такая слепота опаснее молчания.
+ *
+ * Возвращает [{ kind, f }], где kind — 'cf' (условное форматирование)
+ * или 'dv' (проверка данных).
+ */
+function scanNonCellFormulas(xml) {
+    const out = [];
+    const add = (kind, f) => {
+        const t = unesc(String(f || '')).trim();
+        // Пустые и чисто числовые пороги («0», «100») ссылок не несут
+        if (t && !/^[-\d.,\s]*$/.test(t)) out.push({ kind, f: t });
+    };
+    const grab = (re, kind, src) => { let m; while ((m = re.exec(src)) !== null) add(kind, m[1]); };
+
+    // Классические правила: <cfRule><formula>…</formula></cfRule>
+    grab(/<formula>([\s\S]*?)<\/formula>/g, 'cf', xml);
+    // Проверка данных: <dataValidation><formula1>…</formula1>
+    grab(/<formula1>([\s\S]*?)<\/formula1>/g, 'dv', xml);
+    grab(/<formula2>([\s\S]*?)<\/formula2>/g, 'dv', xml);
+    // Расширения Excel 2010+: формула лежит в <xm:f>, а тип правила понятен
+    // только по родительскому блоку — поэтому сначала вырезаем блоки.
+    (xml.match(/<x14:conditionalFormattings[\s\S]*?<\/x14:conditionalFormattings>/g) || [])
+        .forEach(b => grab(/<xm:f[^>]*>([\s\S]*?)<\/xm:f>/g, 'cf', b));
+    (xml.match(/<x14:dataValidations[\s\S]*?<\/x14:dataValidations>/g) || [])
+        .forEach(b => grab(/<xm:f[^>]*>([\s\S]*?)<\/xm:f>/g, 'dv', b));
+    return out;
+}
+
+/** Куда записать ссылку из формулы вне ячейки: те же карты, что и для ячеек. */
+function mergeRefs(sheet, kind, fText) {
+    const s = scanFormula(fText);
+    const bump = (map, key) => map.set(key, (map.get(key) || 0) + 1);
+    s.sheets.forEach(x => bump(sheet.refsOut, x));
+    s.tables.forEach(x => bump(sheet.tableRefs, x));
+    s.ext.forEach(x => bump(sheet.extRefs, x));
+    s.names.forEach(x => {
+        bump(sheet.nameRefs, x);
+        // Откуда именно пришла ссылка — это и есть ответ на вопрос «можно ли удалять»
+        const u = sheet.useKinds.get(x) || { f: 0, cf: 0, dv: 0, chart: 0 };
+        u[kind] = (u[kind] || 0) + 1;
+        sheet.useKinds.set(x, u);
+    });
+    return s.names.length + s.sheets.length + s.tables.length;
+}
+
 function scanSheetXml(xml, sheet) {
     const dimM = /<dimension\s+ref="([^"]+)"/.exec(xml);
     let maxR = 0, maxC = 0;
@@ -1526,6 +1660,13 @@ function scanSheetXml(xml, sheet) {
         sheet.truncated = true;
         sheet.formulaCount = (xml.match(/<f[\s>\/]/g) || []).length;
         sheet.heat = { w: hw, h: hh, data: heat };
+        // Ячейки на таком листе не разбираем, но правил на нём десятки, а не
+        // тысячи: прочитать их дёшево, а без них «имя не используется» соврёт.
+        Object.assign(sheet, {
+            refsOut: new Map(), tableRefs: new Map(), nameRefs: new Map(),
+            extRefs: new Map(), useKinds: new Map(),
+        });
+        applyNonCellFormulas(xml, sheet);
         return;
     }
 
@@ -1538,6 +1679,7 @@ function scanSheetXml(xml, sheet) {
     const nameRefs  = new Map();
     const extRefs   = new Map();
     const funcs     = new Map();
+    const useKinds  = new Map();         // имя → откуда на него ссылаются (ячейка/УФ/проверка/диаграмма)
     const invisible = [];                // ячейки с INDIRECT/OFFSET
     const wholeCol  = [];
     const errorCells = [];
@@ -1588,7 +1730,11 @@ function scanSheetXml(xml, sheet) {
             const s = scanFormula(fText);
             s.sheets.forEach(sh => refsOut.set(sh, (refsOut.get(sh) || 0) + 1));
             s.tables.forEach(t => tableRefs.set(t, (tableRefs.get(t) || 0) + 1));
-            s.names.forEach(nm => nameRefs.set(nm, (nameRefs.get(nm) || 0) + 1));
+            s.names.forEach(nm => {
+                nameRefs.set(nm, (nameRefs.get(nm) || 0) + 1);
+                const u = useKinds.get(nm) || { f: 0, cf: 0, dv: 0, chart: 0 };
+                u.f++; useKinds.set(nm, u);
+            });
             s.ext.forEach(e => extRefs.set(e, (extRefs.get(e) || 0) + 1));
             s.funcs.forEach((c, fn) => funcs.set(fn, (funcs.get(fn) || 0) + c));
             if (s.flags.invisible && invisible.length < 60 && rm) invisible.push({ cell: rm[1], f: fText });
@@ -1634,9 +1780,22 @@ function scanSheetXml(xml, sheet) {
     Object.assign(sheet, {
         cellCount: cells, formulaCount: formulas, constCount: consts, textCount: texts,
         errorCount: errors, errKinds, colStats, refsOut, tableRefs, nameRefs, extRefs, funcs,
-        invisible, wholeCol, errorCells, longest: longest.slice(0, 20),
+        useKinds, invisible, wholeCol, errorCells, longest: longest.slice(0, 20),
         rows: maxR, cols: maxC, heat: { w: hw, h: hh, data: heat },
     });
+    applyNonCellFormulas(xml, sheet);
+}
+
+/** Разбирает правила листа и добавляет их ссылки к ссылкам из ячеек. */
+function applyNonCellFormulas(xml, sheet) {
+    const found = scanNonCellFormulas(xml);
+    let cf = 0, dv = 0;
+    found.forEach(x => {
+        mergeRefs(sheet, x.kind, x.f);
+        if (x.kind === 'cf') cf++; else dv++;
+    });
+    sheet.cfFormulas = cf;
+    sheet.dvFormulas = dv;
 }
 
 /**
@@ -1838,6 +1997,39 @@ async function parseOOXML(bytes, book, log) {
         log('ok', 'Лист «' + sh.name + '»: формул ' + fmtNum(sh.formulaCount) + ', ошибок ' + fmtNum(sh.errorCount));
         await nextFrame();
     }
+
+    /* ── диаграммы: ряд диаграммы — такая же ссылка на данные, как формула.
+          Путь до неё: лист → рисунок → диаграмма, всё через rels. Лист, на
+          котором диаграмма лежит, известен, поэтому ссылку записываем ему —
+          для графа это обычная связь «откуда данные». */
+    book.charts = [];
+    for (const sh of book.sheets) {
+        if (!sh.rels || !sh.nameRefs) continue;
+        for (const rel of sh.rels.filter(r => r.type === 'drawing')) {
+            const dx = txt(rel.target);
+            if (!dx) continue;
+            const drRels = txt(rel.target.replace(/([^/]+)$/, '_rels/$1.rels'));
+            if (!drRels) continue;
+            els(xmlDoc(drRels), 'Relationship')
+                .filter(r => /chart/i.test(r.getAttribute('Type') || ''))
+                .forEach(r => {
+                    const cp = resolvePath(rel.target.replace(/[^/]+$/, ''), r.getAttribute('Target'));
+                    const cx = txt(cp);
+                    if (!cx) return;
+                    // <c:f> у обычных диаграмм, <cx:f> у диаграмм Excel 2016+
+                    const refs = (cx.match(/<c?x?:?f>([\s\S]*?)<\/c?x?:?f>/g) || [])
+                        .map(t => unesc(t.replace(/<\/?[a-z:]*f>/g, '')).trim()).filter(Boolean);
+                    const title = /<c:tx>[\s\S]*?<a:t>([^<]{1,80})<\/a:t>/.exec(cx);
+                    refs.forEach(f => mergeRefs(sh, 'chart', f));
+                    book.charts.push({
+                        path: cp, sheet: sh.name, series: refs.length,
+                        title: title ? title[1] : null,
+                    });
+                });
+        }
+    }
+    if (book.charts.length) log('ok', 'Диаграммы: ' + book.charts.length + ', рядов со ссылками — ' +
+        fmtNum(book.charts.reduce((a, c) => a + c.series, 0)));
 
     /* ── умные таблицы */
     book.tables = [];
@@ -2229,7 +2421,7 @@ function buildFromSheetJS(wb, book) {
             tables: [], queries: [], pivots: [],
             cellCount: 0, formulaCount: 0, constCount: 0, textCount: 0, errorCount: 0,
             errKinds: new Map(), colStats: new Map(), refsOut: new Map(), tableRefs: new Map(),
-            nameRefs: new Map(), extRefs: new Map(), funcs: new Map(),
+            nameRefs: new Map(), extRefs: new Map(), funcs: new Map(), useKinds: new Map(),
             invisible: [], wholeCol: [], errorCells: [], longest: [],
         };
         const ws = wb.Sheets[name];
@@ -2260,7 +2452,11 @@ function buildFromSheetJS(wb, book) {
                 const s = scanFormula(cell.f);
                 s.sheets.forEach(x => sh.refsOut.set(x, (sh.refsOut.get(x) || 0) + 1));
                 s.tables.forEach(x => sh.tableRefs.set(x, (sh.tableRefs.get(x) || 0) + 1));
-                s.names.forEach(x => sh.nameRefs.set(x, (sh.nameRefs.get(x) || 0) + 1));
+                s.names.forEach(x => {
+                    sh.nameRefs.set(x, (sh.nameRefs.get(x) || 0) + 1);
+                    const u = sh.useKinds.get(x) || { f: 0, cf: 0, dv: 0, chart: 0 };
+                    u.f++; sh.useKinds.set(x, u);
+                });
                 s.ext.forEach(x => sh.extRefs.set(x, (sh.extRefs.get(x) || 0) + 1));
                 s.funcs.forEach((c, fn) => sh.funcs.set(fn, (sh.funcs.get(fn) || 0) + c));
                 if (s.flags.invisible && sh.invisible.length < 60) sh.invisible.push({ cell: addr, f: cell.f });
@@ -2444,7 +2640,18 @@ function buildGraph(books) {
                 if (nodeIdx.has(tid(t))) addEdge(tid(t), sid(sh.name), 'ref', cnt);
             });
             (sh.nameRefs || new Map()).forEach((cnt, n) => {
-                if (nodeIdx.has(nid(n))) { addEdge(nid(n), sid(sh.name), 'ref', cnt); const dn = (book.names || []).find(x => x.name === n); if (dn) dn.uses += cnt; }
+                const dn = (book.names || []).find(x => x.name === n);
+                if (dn) {
+                    dn.uses += cnt;
+                    // Разбивка «откуда ссылаются» нужна не для красоты: по ней
+                    // конструктор очистки решает, можно ли удалять имя.
+                    const u = (sh.useKinds || new Map()).get(n);
+                    if (u) {
+                        dn.usedIn = dn.usedIn || { f: 0, cf: 0, dv: 0, chart: 0 };
+                        ['f', 'cf', 'dv', 'chart'].forEach(k => { dn.usedIn[k] += (u[k] || 0); });
+                    }
+                }
+                if (nodeIdx.has(nid(n))) addEdge(nid(n), sid(sh.name), 'ref', cnt);
             });
             (sh.extRefs || new Map()).forEach((cnt, x) => {
                 const link = (book.externalLinks || []).find(l => l.index === x);
@@ -2586,6 +2793,7 @@ const FIX_HINTS = {
     'dead-queries': '<b>Данные → Запросы и подключения</b>, правой кнопкой по запросу → <b>Удалить</b>. Сначала убедитесь, что он не используется как функция или параметр другими запросами. Если удалять жалко — снимите галку «Обновлять при обновлении всех», чтобы он не тратил время.',
     'orphan-sheets': 'Проверьте, не читают ли данные с листа вручную или макросом — граф этого не видит. Если нет, лист можно вынести в архивный файл. Перед удалением сделайте копию книги.',
     'unused-names': '<b>Диспетчер имён (Ctrl+F3)</b> → выделите и удалите. Список полей станет короче, книга — легче. Имена с префиксом <span class="mono">_xlfn</span> и <span class="mono">_xlnm</span> служебные, их не трогайте.',
+    'names-hidden': 'Через интерфейс их не удалить: Диспетчер имён скрытые имена не показывает, а значит и выделить их нечем. Откройте вкладку <b>«Очистка книги»</b> — там разбор по происхождению и сборка макроса под вашу книгу. Порядок: копия файла → пробный запуск с отчётом → удаление. Начинать стоит с группы «ссылаются на #REF!»: они мертвы гарантированно.',
     'ghost-range': 'Выделите строки ниже данных и столбцы правее (<b>Ctrl+Shift+↓</b> / <b>→</b>) и нажмите <b>Удалить</b> — именно удалить, не «Очистить». Затем сохраните и переоткройте книгу: диапазон пересчитается.',
     'vba': '<b>Alt+F11</b> — посмотрите модули. Если макросы не нужны, сохраните книгу как <span class="mono">.xlsx</span>: код исчезнет вместе с предупреждением безопасности при открытии.',
     'protection': '<b>Рецензирование → Снять защиту листа</b>. Пароль в файле не хранится в открытом виде — если он утерян, лист придётся пересоздать копированием содержимого на новый.',
@@ -2651,16 +2859,27 @@ function runAudit(books, graph) {
             why: 'Самый незаметный из критичных дефектов: в самих ячейках может ничего не подсвечиваться, а имя уже мертво. Всплывает в самый неподходящий момент.',
             count: brokenNames.length, items: brokenNames });
 
-        // Скрытые имена — отдельная история: не дефект расчёта, а балласт файла
+        // Скрытые имена — отдельная история: не дефект расчёта, а балласт файла.
+        // Списком в 16 тысяч строк тут пользоваться нельзя, поэтому сначала идёт
+        // разбор по происхождению, а сами имена — ниже и целиком на «Очистке».
         const hiddenBroken = hiddenAll.filter(n => n.broken).length;
         if (hiddenAll.length) {
+            const по = new Map();
+            hiddenAll.forEach(n => {
+                const row = { name: n.name, bare: bareName(n.name), broken: n.broken, uses: n.uses || 0 };
+                const g = NAME_GROUPS.find(x => x.test(row)) || NAME_GROUPS[NAME_GROUPS.length - 1];
+                по.set(g.id, (по.get(g.id) || 0) + 1);
+            });
+            const свод = NAME_GROUPS.filter(g => по.get(g.id))
+                .map(g => ({ loc: RISK[g.risk].dot + ' ' + g.label, txt: fmtNum(по.get(g.id)) + ' шт. — ' + g.note }));
             add({ id: 'names-hidden', category: 'Гигиена', severity: 'minor',
                 title: 'Скрытые именованные диапазоны от надстроек и шаблонов',
                 desc: 'У имени стоит признак hidden — Excel не показывает его в Диспетчере имён (Ctrl+F3)' +
                       (hiddenBroken ? '. Из них сломано: ' + fmtNum(hiddenBroken) : '') + '.',
-                why: 'Обычно это следы надстроек (BLPH… — Bloomberg), режимов представления и копирования листов из чужих книг. На расчёт они не влияют, но раздувают файл, замедляют открытие и создают ложное впечатление, что в книге тысячи диапазонов. Вручную их не удалить — нужен макрос или пересборка книги.',
+                why: 'Обычно это следы надстроек (BLPH… — Bloomberg), режимов представления и копирования листов из чужих книг. На расчёт они не влияют, но раздувают workbook.xml, замедляют открытие и создают ложное впечатление, что в книге тысячи диапазонов. Вручную их не удалить: Диспетчер имён их не показывает, а значит и не даёт выделить.',
                 count: hiddenAll.length,
-                items: hiddenAll.slice(0, 200).map(n => ({ loc: pre + n.name, txt: 'область: ' + n.scope + '  ·  ' + n.ref })) });
+                items: свод.concat(hiddenAll.slice(0, 150)
+                    .map(n => ({ loc: pre + n.name, txt: 'область: ' + n.scope + '  ·  ' + n.ref }))) });
         }
 
         // Ручной режим пересчёта — файл показывает старые числа
@@ -2972,6 +3191,7 @@ async function loadFiles(fileList) {
     $('#progress-log').innerHTML = '';
     setProgress(2);
     APP.books = [];
+    APP.cleanupPick = null;   // у новой книги свой набор групп — старый выбор к ней не относится
 
     for (let fi = 0; fi < files.length; fi++) {
         const file = files[fi];
@@ -3051,6 +3271,7 @@ function renderAll() {
     renderPQ();
     renderModel();
     renderQuality();
+    renderCleanup();
     renderReport();
     renderGraph();
     renderBadges();
@@ -3078,6 +3299,10 @@ function renderBadges() {
     set('#badge-pq', totalQ || null);
     // #badge-graph заполняет renderGraph: там известно, сколько узлов реально видно
     set('#badge-quality', crit || major || null, crit ? 'bad' : 'warn');
+    // На бейдже очистки — только то, что REX сам считает безопасным к удалению
+    const safe = (APP.cleanupGroups || [])
+        .filter(g => g.group.risk === 'safe').reduce((a, g) => a + g.names.length, 0);
+    set('#badge-cleanup', safe ? fmtNum(safe) : null);
     $('#sidebar-file').textContent = APP.books.length === 1 ? APP.books[0].fileName : APP.books.length + ' книги';
 }
 
@@ -3667,6 +3892,424 @@ function renderQuality() {
             : '') +
         '</div></div>').join('')
         : '<div class="card"><div class="empty-state">По этому уровню важности находок нет.</div></div>';
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ОЧИСТКА КНИГИ: разбор мусорных имён и сборка макроса под конкретную книгу
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Скрытые имена (hidden="1") Excel не показывает в Диспетчере имён, поэтому
+   удалить их можно только макросом. Удалять «всё скрытое» одной кнопкой
+   опасно: среди скрытых есть рабочие — служебные имена диаграмм, модель
+   «Поиска решения», имена, на которых держится условное форматирование.
+   Поэтому здесь не одна кнопка, а разбор по происхождению: каждая группа
+   со своей оценкой риска, выбирает человек.
+
+   Оценка риска — это не гарантия, а то, что видно из файла:
+     safe      — ссылаться не на что либо источник известен и мёртв
+     probably  — похоже на мусор, но происхождение не опознано
+     danger    — есть признаки, что имя работает; по умолчанию не предлагаем
+*/
+
+const RISK = {
+    safe:     { label: 'можно удалять',  color: '#16a34a', dot: '🟢' },
+    probably: { label: 'скорее мусор',   color: '#d97706', dot: '🟡' },
+    danger:   { label: 'не трогать',     color: '#dc2626', dot: '🔴' },
+};
+
+/* Порядок важен: имя попадает в первую подошедшую группу.
+   Поле vba — та же проверка на языке макроса, чтобы UI и сгенерированный
+   код не могли разойтись в трактовке. */
+const NAME_GROUPS = [
+    { id: 'used', risk: 'danger', label: 'Используются в книге',
+      note: 'REX нашёл ссылки на это имя — в формулах, условном форматировании, проверке данных или рядах диаграмм. Удалять нельзя.',
+      test: n => n.uses > 0, vba: null },
+
+    { id: 'xlchart', risk: 'danger', label: 'Служебные имена диаграмм (_xlchart…)',
+      note: 'Excel создаёт их сам под ряды диаграмм и сам за ними следит. Удаление ломает диаграмму.',
+      test: n => /^_xlchart/i.test(n.bare), vba: 'Left$(чистое, 8) = "_xlchart"' },
+
+    { id: 'solver', risk: 'danger', label: 'Модель «Поиска решения» (solver_…)',
+      note: 'Настройки надстройки «Поиск решения». Если ей пользуются на листе — удалять только через саму надстройку.',
+      test: n => /^solver_/i.test(n.bare), vba: 'LCase$(Left$(чистое, 7)) = "solver_"' },
+
+    { id: 'punct', risk: 'safe', label: 'Имена из служебных символов',
+      note: 'Имена вида «\\», «___», «..» — обломки автозамены и импорта. Смысла не несут ни при каких условиях.',
+      test: n => /^[\\_.]+$/.test(n.bare), vba: 'Мусорное(чистое)' },
+
+    { id: 'blph', risk: 'safe', label: 'Надстройка Bloomberg (BLPH…)',
+      note: 'Служебные якоря надстройки Bloomberg. Работают, только пока книга тянет котировки через неё. Если надстройки нет — мусор.',
+      test: n => /^BLPH\d*$/i.test(n.bare), vba: 'UCase$(Left$(чистое, 4)) = "BLPH"' },
+
+    { id: 'views', risk: 'safe', label: 'Режимы представления (…rwn…)',
+      note: 'Остатки «Представлений» и печатных наборов из старых шаблонов финансовой отчётности. На расчёт не влияют.',
+      test: n => /rwn\d/i.test(n.bare), vba: 'InStr(1, LCase$(чистое), "rwn") > 0' },
+
+    { id: 'addins', risk: 'safe', label: 'Отчётные и аудиторские надстройки (AS2…, AAA…, AAB…)',
+      note: 'Следы надстроек, которые стояли у автора книги-предка. В вашей книге они уже ни к чему не подключены.',
+      test: n => /^(AS2|AAA[_\d]|AAB[_\d])/i.test(n.bare),
+      vba: 'UCase$(Left$(чистое, 3)) = "AS2" Or UCase$(Left$(чистое, 3)) = "AAA" Or UCase$(Left$(чистое, 3)) = "AAB"' },
+
+    { id: 'short', risk: 'danger', label: 'Слишком короткие имена (1–2 символа)',
+      note: 'Односимвольное имя невозможно надёжно отличить от обычного текста в формуле, поэтому проверка «используется ли оно» здесь не работает. Безопаснее оставить.',
+      test: n => n.bare.length < 3, vba: 'Len(чистое) < 3' },
+
+    { id: 'broken', risk: 'safe', label: 'Прочие мёртвые: ссылаются на #REF!',
+      note: 'Происхождение не опознано, но диапазон, на который смотрело имя, удалён. Восстановить нечего: такое имя не может работать ни при каких условиях.',
+      test: n => n.broken, vba: 'InStr(1, ссылка, "#REF!") > 0' },
+
+    { id: 'other', risk: 'probably', label: 'Прочие скрытые имена',
+      note: 'Происхождение не опознано, ссылка живая, но имя скрыто и ссылок на него в книге нет. Обычно это тот же мусор из чужих шаблонов — просто из надстройки, которую мы не знаем в лицо.',
+      test: () => true, vba: null },
+];
+
+/** Имя вида «Лист1!Имя» → «Имя»: у имён с областью «лист» так хранится область. */
+const bareName = x => { const i = String(x).lastIndexOf('!'); return i >= 0 ? String(x).slice(i + 1) : String(x); };
+
+/** Разбирает скрытые имена книги по группам. Возвращает [{group, names[]}]. */
+function classifyHiddenNames() {
+    const rows = [];
+    APP.books.forEach((b, bi) => (b.names || []).forEach(n => {
+        if (n.builtin || !n.hidden) return;
+        rows.push({ book: bi, name: n.name, bare: bareName(n.name), scope: n.scope,
+                    ref: n.ref, broken: n.broken, uses: n.uses || 0, usedIn: n.usedIn || null });
+    }));
+    const by = new Map();
+    rows.forEach(r => {
+        const g = NAME_GROUPS.find(x => x.test(r)) || NAME_GROUPS[NAME_GROUPS.length - 1];
+        if (!by.has(g.id)) by.set(g.id, []);
+        by.get(g.id).push(r);
+    });
+    // Сколько внутри группы мёртвых — это то, что меняет решение: «378 имён
+    // Bloomberg, и все они уже ссылаются на #REF!» звучит совсем иначе.
+    return NAME_GROUPS.filter(g => by.has(g.id)).map(g => ({
+        group: g, names: by.get(g.id),
+        dead: by.get(g.id).filter(x => x.broken).length,
+    }));
+}
+
+/** Имена, которые макрос не должен трогать ни при каких настройках. */
+function protectedNames() {
+    const out = [];
+    APP.books.forEach(b => (b.names || []).forEach(n => {
+        if (!n.builtin && n.uses > 0) out.push(bareName(n.name));
+    }));
+    return Array.from(new Set(out));
+}
+
+
+/** Собирает модуль VBA под конкретную книгу и под выбранные группы.
+    Макрос строится на правилах, а не на списке имён: работать он будет на
+    той версии файла, которая открыта у человека, а она почти наверняка
+    новее той, что разбирал REX. Единственное, что переносится списком —
+    защита: имена, у которых REX нашёл использование. */
+function buildCleanupMacro(selectedIds, opts) {
+    const groups = classifyHiddenNames();
+    const chosen = NAME_GROUPS.filter(g => selectedIds.indexOf(g.id) !== -1);
+    const prot   = protectedNames();
+    const file   = (APP.books[0] || {}).fileName || 'книга';
+    const total  = groups.reduce((a, g) => a + g.names.length, 0);
+    const toKill = groups.filter(g => selectedIds.indexOf(g.group.id) !== -1)
+                         .reduce((a, g) => a + g.names.length, 0);
+    const L = [];
+    const c = t => L.push(t);
+
+    c('Attribute VB_Name = "REX_Очистка"');
+    c("' ===========================================================================");
+    c("'  Очистка именованных диапазонов — собрано " + APP_NAME + ' v' + APP_VERSION);
+    c("'  Книга-образец: " + file.replace(/["']/g, ''));
+    c("'  Скрытых имён в ней: " + total + ', под удаление выбрано: ' + toKill);
+    c("'");
+    c("'  ПОРЯДОК РАБОТЫ");
+    c("'    1. Сделайте копию файла. Удаление имён не отменяется через Ctrl+Z.");
+    c("'    2. Alt+F11 → File → Import File… → этот .bas");
+    c("'    3. Alt+F8 → REX_ОчиститьИмена → «Выполнить».");
+    c("'       При ТОЛЬКО_ОТЧЁТ = True макрос ничего не удаляет: он лишь");
+    c("'       выписывает на лист «REX_очистка», что и почему собирался тронуть.");
+    c("'    4. Просмотрели отчёт → поставьте ТОЛЬКО_ОТЧЁТ = False и запустите снова.");
+    c("'    5. После удаления: Ctrl+Alt+F9 (полный пересчёт) и проверьте отчёты.");
+    c("' ===========================================================================");
+    c('Option Explicit');
+    c('');
+    c("' Что удалять. Строку можно править руками: имена групп те же, что в REX.");
+    c('Private Const ГРУППЫ_К_УДАЛЕНИЮ As String = "|' + selectedIds.join('|') + '|"');
+    c('');
+    c("' True — только отчёт, книга не меняется. Начинайте всегда с True.");
+    c('Private Const ТОЛЬКО_ОТЧЁТ As Boolean = ' + (opts.dryRun ? 'True' : 'False'));
+    c('');
+    c("' Имена, у которых REX нашёл использование в формулах, условном форматировании,");
+    c("' проверке данных или рядах диаграмм. Не удаляются ни при каких настройках.");
+    c('Private ЗАЩИТА As Object');
+    c('');
+    c('Public Sub REX_ОчиститьИмена()');
+    c('    Dim i As Long, имя As String, чистое As String, ссылка As String');
+    c('    Dim группа As String, удалить As Boolean');
+    c('    Dim удалено As Long, оставлено As Long, ошибок As Long, всего As Long');
+    c('    Dim буфер() As String, строк As Long, t As Single');
+    c('');
+    c('    ЗаполнитьЗащиту');
+    c('    t = Timer');
+    c('');
+    c('    If Not ТОЛЬКО_ОТЧЁТ Then');
+    c('        If MsgBox("Удалить имена выбранных групп безвозвратно?" & vbCrLf & vbCrLf & _');
+    c('                  "Группы: " & ГРУППЫ_К_УДАЛЕНИЮ & vbCrLf & _');
+    c('                  "Работайте на копии файла — отмены не будет.", _');
+    c('                  vbYesNo + vbExclamation, "REX") <> vbYes Then Exit Sub');
+    c('    End If');
+    c('');
+    c('    Application.ScreenUpdating = False');
+    c('    Application.DisplayAlerts = False');
+    c('    Application.Calculation = xlCalculationManual');
+    c('');
+    c('    всего = ThisWorkbook.Names.Count');
+    c('    ReDim буфер(1 To WorksheetFunction.Max(всего, 1), 1 To 5)');
+    c('');
+    c("    ' С конца: после каждого удаления коллекция перенумеровывается");
+    c('    For i = всего To 1 Step -1');
+    c('        имя = "": ссылка = "": группа = ""');
+    c('        On Error Resume Next');
+    c('        имя = ThisWorkbook.Names(i).Name');
+    c('        ссылка = ThisWorkbook.Names(i).RefersTo');
+    c('        группа = ГруппаИмени(ThisWorkbook.Names(i))');
+    c('        On Error GoTo 0');
+    c('');
+    c('        If Len(имя) > 0 Then');
+    c('            удалить = (InStr(1, ГРУППЫ_К_УДАЛЕНИЮ, "|" & группа & "|") > 0)');
+    c('            строк = строк + 1');
+    c('            буфер(строк, 1) = имя');
+    c('            буфер(строк, 2) = ОписаниеГруппы(группа)');
+    c("            буфер(строк, 3) = \"'\" & ссылка");
+    c('            буфер(строк, 4) = IIf(удалить, IIf(ТОЛЬКО_ОТЧЁТ, "будет удалено", "удалено"), "оставлено")');
+    c('            буфер(строк, 5) = группа');
+    c('');
+    c('            If удалить And Not ТОЛЬКО_ОТЧЁТ Then');
+    c('                On Error Resume Next');
+    c('                ThisWorkbook.Names(i).Delete');
+    c('                If Err.Number = 0 Then');
+    c('                    удалено = удалено + 1');
+    c('                Else');
+    c('                    ошибок = ошибок + 1');
+    c('                    буфер(строк, 4) = "не удалилось: " & Err.Description');
+    c('                End If');
+    c('                Err.Clear');
+    c('                On Error GoTo 0');
+    c('            ElseIf удалить Then');
+    c('                удалено = удалено + 1');
+    c('            Else');
+    c('                оставлено = оставлено + 1');
+    c('            End If');
+    c('        End If');
+    c('');
+    c('        If i Mod 500 = 0 Then Application.StatusBar = "REX: осталось проверить " & i & " имён…"');
+    c('    Next i');
+    c('');
+    c('    ЗаписатьОтчёт буфер, строк');
+    c('');
+    c('    Application.StatusBar = False');
+    c('    Application.Calculation = xlCalculationAutomatic');
+    c('    Application.DisplayAlerts = True');
+    c('    Application.ScreenUpdating = True');
+    c('');
+    c('    MsgBox IIf(ТОЛЬКО_ОТЧЁТ, "Пробный проход, книга не изменена." & vbCrLf & vbCrLf, "") & _');
+    c('           IIf(ТОЛЬКО_ОТЧЁТ, "Под удаление попадает: ", "Удалено: ") & удалено & vbCrLf & _');
+    c('           "Оставлено: " & оставлено & vbCrLf & _');
+    c('           "Не удалилось: " & ошибок & vbCrLf & vbCrLf & _');
+    c('           "Подробности — на листе «REX_очистка»." & vbCrLf & _');
+    c('           "Заняло " & Format$(Timer - t, "0.0") & " с.", vbInformation, "REX"');
+    c('End Sub');
+    c('');
+    c("' ─────────────────────────── классификация ───────────────────────────");
+    c("' Порядок проверок повторяет порядок в REX: имя попадает в первую");
+    c("' подошедшую группу, поэтому менять его местами нельзя.");
+    c('Private Function ГруппаИмени(n As Name) As String');
+    c('    Dim чистое As String, ссылка As String, видимое As Boolean');
+    c('    видимое = True: ссылка = ""');
+    c('    On Error Resume Next');
+    c('    видимое = n.Visible');
+    c('    ссылка = n.RefersTo');
+    c('    On Error GoTo 0');
+    c('    чистое = ЧистоеИмя(n.Name)');
+    c('');
+    c('    If видимое Then ГруппаИмени = "visible": Exit Function');
+    c('    If InStr(1, чистое, "_xlnm.") > 0 Or InStr(1, чистое, "_xlfn.") > 0 Then');
+    c('        ГруппаИмени = "builtin": Exit Function');
+    c('    End If');
+    c('    If ЗАЩИТА.Exists(чистое) Then ГруппаИмени = "used": Exit Function');
+    c('%%GROUPS%%');
+    c('    ГруппаИмени = "other"');
+    c('End Function');
+    c('');
+    c('Private Function ОписаниеГруппы(ByVal g As String) As String');
+    c('    Select Case g');
+    c('%%DESCR%%');
+    c('        Case "visible": ОписаниеГруппы = "видимое имя — Диспетчер имён его показывает"');
+    c('        Case "builtin": ОписаниеГруппы = "встроенное имя Excel (область печати, фильтр)"');
+    c('        Case Else:      ОписаниеГруппы = g');
+    c('    End Select');
+    c('End Function');
+    c('');
+    c("' «Лист1!Имя» → «Имя»");
+    c('Private Function ЧистоеИмя(ByVal имя As String) As String');
+    c('    Dim p As Long');
+    c('    p = InStrRev(имя, "!")');
+    c('    ЧистоеИмя = IIf(p > 0, Mid$(имя, p + 1), имя)');
+    c('End Function');
+    c('');
+    c("' Имя целиком из служебных символов: «\\», «___», «..»");
+    c('Private Function Мусорное(ByVal s As String) As Boolean');
+    c('    Dim i As Long, ch As String');
+    c('    If Len(s) = 0 Then Exit Function');
+    c('    For i = 1 To Len(s)');
+    c('        ch = Mid$(s, i, 1)');
+    c('        If ch <> "_" And ch <> "\\" And ch <> "." Then Exit Function');
+    c('    Next i');
+    c('    Мусорное = True');
+    c('End Function');
+    c('');
+    c("' ─────────────────────────── отчёт на лист ───────────────────────────");
+    c('Private Sub ЗаписатьОтчёт(ByRef буфер() As String, ByVal строк As Long)');
+    c('    Dim ws As Worksheet');
+    c('    If строк = 0 Then Exit Sub');
+    c('    On Error Resume Next');
+    c('    Set ws = ThisWorkbook.Worksheets("REX_очистка")');
+    c('    On Error GoTo 0');
+    c('    If ws Is Nothing Then');
+    c('        Set ws = ThisWorkbook.Worksheets.Add(Before:=ThisWorkbook.Worksheets(1))');
+    c('        ws.Name = "REX_очистка"');
+    c('    End If');
+    c('    ws.Cells.Clear');
+    c('    ws.Range("A1:E1").Value = Array("Имя", "Группа", "Ссылается на", "Действие", "Код группы")');
+    c('    ws.Range("A1:E1").Font.Bold = True');
+    c('    ws.Range("A2").Resize(строк, 5).Value = буфер');
+    c('    ws.Columns("A:E").AutoFit');
+    c('    ws.Rows(1).AutoFilter');
+    c('End Sub');
+    c('');
+    c("' ──────────────────── защита: имена, которые работают ────────────────");
+    c('Private Sub ЗаполнитьЗащиту()');
+    c('    Set ЗАЩИТА = CreateObject("Scripting.Dictionary")');
+    c('    ЗАЩИТА.CompareMode = 1   \' без учёта регистра, как в самом Excel');
+    c('%%PROTECT%%');
+    c('End Sub');
+
+    /* Тела групп и описания — из того же NAME_GROUPS, что рисует интерфейс */
+    const gl = [];
+    NAME_GROUPS.forEach(g => {
+        if (!g.vba) return;
+        gl.push('    If ' + g.vba + ' Then ГруппаИмени = "' + g.id + '": Exit Function');
+    });
+    const dl = NAME_GROUPS.map(g =>
+        '        Case "' + g.id + '": ОписаниеГруппы = "' + g.label.replace(/"/g, "'") + '"');
+
+    /* Защищённый список: VBA не переваривает строки длиннее ~1000 символов,
+       поэтому раскладываем по несколько имён в строку. */
+    const pl = [];
+    if (!prot.length) {
+        pl.push("    ' Использованных имён REX не нашёл — защищать нечего.");
+    } else {
+        for (let i = 0; i < prot.length; i += 4) {
+            pl.push('    ' + prot.slice(i, i + 4)
+                .map(x => 'ЗАЩИТА("' + String(x).replace(/"/g, '""') + '") = 1').join(': '));
+        }
+    }
+
+    return L.join('\n')
+        .replace('%%GROUPS%%', gl.join('\n'))
+        .replace('%%DESCR%%', dl.join('\n'))
+        .replace('%%PROTECT%%', pl.join('\n'));
+}
+
+
+/* ─────────────── ОЧИСТКА: отрисовка и конструктор ─────────────── */
+
+const CLEANUP_ROWS = 400;   // в таблице; полный список — в CSV
+
+function renderCleanup() {
+    const groups = classifyHiddenNames();
+    APP.cleanupGroups = groups;
+
+    // Первый выбор делаем за человека, но только из безопасного: группы с
+    // риском «не трогать» не отмечены и отмечаются вручную.
+    if (!APP.cleanupPick) {
+        APP.cleanupPick = groups.filter(g => g.group.risk === 'safe').map(g => g.group.id);
+    }
+
+    const total = groups.reduce((a, g) => a + g.names.length, 0);
+    $('#cleanup-empty').hidden = total > 0;
+    if (!total) {
+        $('#cleanup-empty').textContent = 'Скрытых имён в книге нет — чистить нечего. ' +
+            'Это хороший знак: книгу не собирали копированием листов из чужих файлов.';
+    }
+
+    $('#cleanup-groups').innerHTML = groups.map(g => {
+        const r = RISK[g.group.risk];
+        const on = APP.cleanupPick.indexOf(g.group.id) !== -1;
+        const locked = g.group.id === 'used';
+        return '<label class="cl-group' + (locked ? ' is-locked' : '') + '" style="--risk-color:' + r.color + '">' +
+            '<input type="checkbox" data-group="' + g.group.id + '"' +
+                (on ? ' checked' : '') + (locked ? ' disabled' : '') + '>' +
+            '<span class="cl-body">' +
+                '<span class="cl-head"><span class="cl-name">' + esc(g.group.label) + '</span>' +
+                '<span class="cl-risk">' + r.dot + ' ' + r.label + '</span></span>' +
+                '<span class="cl-note">' + esc(g.group.note) +
+                    (g.dead && g.group.id !== 'broken'
+                        ? ' <b>Из них уже мертвы (#REF!): ' + fmtNum(g.dead) + '.</b>' : '') + '</span>' +
+            '</span>' +
+            '<span class="cl-num">' + fmtNum(g.names.length) + '</span></label>';
+    }).join('') || '<div class="empty-state">Скрытых имён нет</div>';
+
+    const picked = groups.filter(g => APP.cleanupPick.indexOf(g.group.id) !== -1)
+                         .reduce((a, g) => a + g.names.length, 0);
+    $('#cleanup-sum').textContent = 'скрытых имён ' + fmtNum(total) +
+        ' · выбрано к удалению ' + fmtNum(picked);
+
+    const prot = protectedNames();
+    $('#cleanup-protect').textContent = prot.length
+        ? 'В макрос уйдёт защита на ' + fmtNum(prot.length) + ' имён, у которых REX нашёл использование.'
+        : 'Использованных имён REX не нашёл — защищать в макросе нечего.';
+
+    $('#cleanup-macro').textContent = total
+        ? buildCleanupMacro(APP.cleanupPick, { dryRun: $('#opt-dryrun').checked })
+        : '// Скрытых имён нет — макрос не нужен.';
+
+    renderCleanupTable();
+}
+
+function renderCleanupTable() {
+    const q = ($('#cleanup-search').value || '').trim().toLowerCase();
+    const rows = [];
+    (APP.cleanupGroups || []).forEach(g => g.names.forEach(n => rows.push({ n, g: g.group })));
+    const found = q
+        ? rows.filter(r => r.n.name.toLowerCase().indexOf(q) !== -1 ||
+                           String(r.n.ref).toLowerCase().indexOf(q) !== -1)
+        : rows;
+
+    $('#cleanup-list-note').textContent = found.length > CLEANUP_ROWS
+        ? 'показаны первые ' + CLEANUP_ROWS + ' из ' + fmtNum(found.length)
+        : fmtNum(found.length) + (q ? ' найдено' : '');
+
+    $('#cleanup-tbody').innerHTML = found.slice(0, CLEANUP_ROWS).map(r =>
+        '<tr><td><strong>' + esc(r.n.name) + '</strong></td>' +
+        '<td><span style="color:' + RISK[r.g.risk].color + ';font-weight:600">' +
+            RISK[r.g.risk].dot + ' ' + esc(r.g.label) + '</span></td>' +
+        '<td class="mono" style="font-size:11px;overflow-wrap:anywhere">' + esc(r.n.ref) + '</td>' +
+        '<td class="num-cell">' + fmtNum(r.n.uses) + '</td></tr>'
+    ).join('') || '<tr><td colspan="4" class="empty-state">' +
+        (q ? 'По запросу ничего не нашлось' : 'Скрытых имён нет') + '</td></tr>';
+}
+
+function cleanupCSV() {
+    const L = ['имя;группа;риск;ссылается на;использований;откуда ссылаются'];
+    (APP.cleanupGroups || []).forEach(g => g.names.forEach(n => {
+        const u = n.usedIn || {};
+        const where = [u.f ? 'формулы ' + u.f : '', u.cf ? 'условное форматирование ' + u.cf : '',
+                       u.dv ? 'проверка данных ' + u.dv : '', u.chart ? 'диаграммы ' + u.chart : '']
+                      .filter(Boolean).join(', ');
+        L.push([n.name, g.group.label, RISK[g.group.risk].label, n.ref, n.uses, where]
+            .map(x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"').join(';'));
+    }));
+    return '﻿' + L.join('\n');
 }
 
 /* ─────────────── ОТЧЁТ ─────────────── */
@@ -4589,6 +5232,40 @@ function initEvents() {
         lg.classList.toggle('collapsed');
         $('#lg-toggle').title = lg.classList.contains('collapsed') ? 'Показать легенду' : 'Свернуть легенду';
     };
+    /* ── конструктор очистки: выбор групп сразу пересобирает макрос,
+          иначе непонятно, что именно даёт галочка */
+    $('#cleanup-groups').addEventListener('change', e => {
+        const cb = e.target.closest('input[data-group]');
+        if (!cb) return;
+        const id = cb.dataset.group;
+        const i = APP.cleanupPick.indexOf(id);
+        if (cb.checked && i === -1) APP.cleanupPick.push(id);
+        if (!cb.checked && i !== -1) APP.cleanupPick.splice(i, 1);
+        renderCleanup();
+    });
+    $('#opt-dryrun').addEventListener('change', renderCleanup);
+    $('#cleanup-search').addEventListener('input', renderCleanupTable);
+    $('#btn-macro-copy').onclick = async () => {
+        const b = $('#btn-macro-copy'), was = b.textContent;
+        try {
+            await navigator.clipboard.writeText($('#cleanup-macro').textContent);
+            b.textContent = 'Скопировано';
+        } catch (e) {
+            // Буфер обмена может быть закрыт политикой браузера — тогда выделяем текст
+            const r = document.createRange();
+            r.selectNodeContents($('#cleanup-macro'));
+            const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+            b.textContent = 'Выделено — Ctrl+C';
+        }
+        setTimeout(() => { b.textContent = was; }, 1800);
+    };
+    $('#btn-macro-download').onclick = () => {
+        download('REX_очистка_имён.bas', $('#cleanup-macro').textContent, 'text/plain;charset=utf-8');
+    };
+    $('#btn-hidden-csv').onclick = () => {
+        download('REX_скрытые_имена.csv', cleanupCSV(), 'text/csv;charset=utf-8');
+    };
+
     $('#names-hidden-toggle').onclick = () => {
         APP.showHiddenNames = !APP.showHiddenNames;
         renderSheets();
