@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.2.2 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.2.3 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1137,6 +1137,7 @@ table.matrix td.cell[data-n] { cursor: default; }
             группы — REX собирает макрос под вашу книгу.
         </p>
         <div class="cleanup-warn" id="cleanup-empty" hidden></div>
+        <div class="cleanup-warn" id="cleanup-vba" hidden></div>
     </div>
 
     <div class="card">
@@ -1233,7 +1234,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.2.3';
 
 const APP = {
     books: [],          // разобранные книги
@@ -2048,6 +2049,38 @@ async function parseOOXML(bytes, book, log) {
     if (book.charts.length) log('ok', 'Диаграммы: ' + book.charts.length + ', рядов со ссылками — ' +
         fmtNum(book.charts.reduce((a, c) => a + c.series, 0)));
 
+    /* ── служебные ссылки на имена. Имя может держать не формула, а само
+          устройство книги: у каждой таблицы запроса (Power Query, загруженный
+          на лист) есть скрытое имя ExternalData_N, и queryTable ссылается на
+          него по имени. Удалить такое имя — получить «книга повреждена»:
+          у таблицы запроса пропадает якорь. Формулы про это ничего не знают,
+          поэтому проверка «имя нигде не используется» без этого разбора лжёт. */
+    book.serviceRefs = new Map();
+    const svc = (nm, why) => {
+        if (!nm) return;
+        const cur = book.serviceRefs.get(nm) || { count: 0, why: new Set() };
+        cur.count++; cur.why.add(why);
+        book.serviceRefs.set(nm, cur);
+    };
+    for (const path of Object.keys(zip)) {
+        if (/^xl\/queryTables\/queryTable\d+\.xml$/i.test(path)) {
+            const m = /<queryTable[^>]*\bname="([^"]+)"/.exec(txt(path) || '');
+            if (m) svc(m[1], 'таблица запроса');
+        } else if (/^xl\/pivotCache\/pivotCacheDefinition\d+\.xml$/i.test(path)) {
+            const x = txt(path) || '';
+            let m; const re = /<worksheetSource[^>]*\bname="([^"]+)"/g;
+            while ((m = re.exec(x)) !== null) svc(m[1], 'источник сводной');
+        } else if (/^xl\/ctrlProps\//i.test(path) || /\.vml$/i.test(path)) {
+            const x = txt(path) || '';
+            let m; const re = /fmla\w+="([^"]+)"|<x:Fmla\w+>([^<]+)<\/x:Fmla\w+>/g;
+            while ((m = re.exec(x)) !== null) {
+                scanFormula(String(m[1] || m[2] || '')).names.forEach(n => svc(n, 'элемент управления'));
+            }
+        }
+    }
+    if (book.serviceRefs.size) log('ok', 'Служебные ссылки на имена: ' + book.serviceRefs.size +
+        ' (' + Array.from(book.serviceRefs.keys()).slice(0, 3).join(', ') + (book.serviceRefs.size > 3 ? '…' : '') + ')');
+
     /* ── умные таблицы */
     book.tables = [];
     for (const path of Object.keys(zip)) {
@@ -2664,7 +2697,7 @@ function buildGraph(books) {
                     // конструктор очистки решает, можно ли удалять имя.
                     const u = (sh.useKinds || new Map()).get(n);
                     if (u) {
-                        dn.usedIn = dn.usedIn || { f: 0, cf: 0, dv: 0, chart: 0 };
+                        dn.usedIn = dn.usedIn || { f: 0, cf: 0, dv: 0, chart: 0, service: 0 };
                         ['f', 'cf', 'dv', 'chart'].forEach(k => { dn.usedIn[k] += (u[k] || 0); });
                     }
                 }
@@ -2683,6 +2716,16 @@ function buildGraph(books) {
                 const n = nodeIdx.get(sid(sh.name));
                 if (n) n.hasInvisible = true;
             }
+        });
+
+        /* ── служебные ссылки: имя держит устройство книги, а не формула */
+        (book.serviceRefs || new Map()).forEach((info, nm) => {
+            (book.names || []).filter(x => bareName(x.name) === nm || x.name === nm).forEach(dn => {
+                dn.uses += info.count;
+                dn.usedIn = dn.usedIn || { f: 0, cf: 0, dv: 0, chart: 0, service: 0 };
+                dn.usedIn.service = (dn.usedIn.service || 0) + info.count;
+                dn.serviceWhy = Array.from(info.why).join(', ');
+            });
         });
 
         /* ── именованный диапазон указывает на лист */
@@ -3945,7 +3988,7 @@ const NAME_GROUPS = [
       test: n => n.isBuiltin, vba: null },
 
     { id: 'used', risk: 'danger', label: 'Используются в книге',
-      note: 'REX нашёл ссылки на это имя — в формулах, условном форматировании, проверке данных или рядах диаграмм. Удалять нельзя.',
+      note: 'REX нашёл ссылки на это имя — в формулах, условном форматировании, проверке данных, рядах диаграмм или в служебном устройстве книги (например, ExternalData_N держит таблицу Power Query на листе). Удалять нельзя.',
       test: n => n.uses > 0, vba: null },
 
     { id: 'visible_broken', risk: 'probably', label: 'Видимые имена со ссылкой #REF!',
@@ -4002,6 +4045,7 @@ const bareName = x => { const i = String(x).lastIndexOf('!'); return i >= 0 ? St
 const looksBuiltin = bare => {
     const s = String(bare).toLowerCase();
     return s.indexOf('_xlfn.') !== -1 || s.indexOf('_xlnm.') !== -1 ||
+           s.slice(0, 13) === 'externaldata_' ||
            (s.slice(0, 3) === '_xl' && s.slice(0, 8) !== '_xlchart');
 };
 
@@ -4017,7 +4061,8 @@ function classifyNames() {
         // непонятно, почему макрос оставляет имена, которых нет в списке.
         if (!isBuiltin && !n.hidden && !n.broken) return;
         rows.push({ book: bi, name: n.name, bare, scope: n.scope, hidden: n.hidden, isBuiltin,
-                    ref: n.ref, broken: n.broken, uses: n.uses || 0, usedIn: n.usedIn || null });
+                    ref: n.ref, broken: n.broken, uses: n.uses || 0, usedIn: n.usedIn || null,
+                    serviceWhy: n.serviceWhy || null });
     }));
     const by = new Map();
     rows.forEach(r => {
@@ -4258,6 +4303,8 @@ function buildCleanupMacro(selectedIds, opts) {
     c('    If Left$(s, 3) = "_xl" And Left$(s, 8) <> "_xlchart" Then');
     c('        IsBuiltInName = True: Exit Function');
     c('    End If');
+    c("    ' ExternalData_N — якорь таблицы запроса Power Query на листе.");
+    c('    If Left$(s, 13) = "externaldata_" Then IsBuiltInName = True: Exit Function');
     c('    Select Case s');
     c('        Case "_filterdatabase", "filterdatabase", "print_area", "print_titles", _');
     c('             "criteria", "extract", "database", "consolidate_area", "sheet_title", _');
@@ -4333,6 +4380,32 @@ function buildCleanupMacro(selectedIds, opts) {
     c('    Set PROTECTED_NAMES = CreateObject("Scripting.Dictionary")');
     c("    PROTECTED_NAMES.CompareMode = 1   ' без учёта регистра, как в самом Excel");
     c('%%PROTECT%%');
+    c('    ProtectServiceNames');
+    c('End Sub');
+    c('');
+    c("' Имя может держать не формула, а само устройство книги: у каждой таблицы");
+    c("' запроса (Power Query, выгруженный на лист) есть скрытое имя ExternalData_N,");
+    c("' и таблица ссылается на него по имени. Удалить его = «книга повреждена».");
+    c("' Список берём из самой книги, а не из разбора REX: у вас на руках версия");
+    c("' файла новее той, что видел REX, и запросов в ней может быть больше.");
+    c('Private Sub ProtectServiceNames()');
+    c('    Dim ws As Worksheet, qt As QueryTable, lo As ListObject, pc As PivotCache');
+    c('    On Error Resume Next');
+    c('    For Each ws In ThisWorkbook.Worksheets');
+    c('        For Each qt In ws.QueryTables');
+    c('            If Len(qt.Name) > 0 Then PROTECTED_NAMES(qt.Name) = 1');
+    c('        Next qt');
+    c('        For Each lo In ws.ListObjects');
+    c('            If Not lo.QueryTable Is Nothing Then');
+    c('                If Len(lo.QueryTable.Name) > 0 Then PROTECTED_NAMES(lo.QueryTable.Name) = 1');
+    c('            End If');
+    c('        Next lo');
+    c('    Next ws');
+    c('    For Each pc In ThisWorkbook.PivotCaches');
+    c('        If Len(CStr(pc.SourceData)) > 0 Then PROTECTED_NAMES(CStr(pc.SourceData)) = 1');
+    c('    Next pc');
+    c('    Err.Clear');
+    c('    On Error GoTo 0');
     c('End Sub');
 
     /* Тела групп и описания — из того же NAME_GROUPS, что рисует интерфейс */
@@ -4374,6 +4447,18 @@ function renderCleanup() {
     }
     // Запертые группы не могут оказаться в выборе даже через старое состояние
     APP.cleanupPick = APP.cleanupPick.filter(id => id !== 'used' && id !== 'builtin');
+
+    // Обращение к имени из кода VBA — единственная ссылка, которую нельзя увидеть
+    // в файле: имя там лежит строкой внутри сжатого модуля. Молчать об этом нельзя.
+    const withVba = APP.books.filter(b => b.vba).length;
+    $('#cleanup-vba').hidden = !withVba;
+    if (withVba) {
+        $('#cleanup-vba').innerHTML = '<b>В книге есть макросы VBA.</b> Код может обращаться к имени ' +
+            'по строке — такую ссылку не видно ни в формулах, ни в структуре файла, и REX её не покажет. ' +
+            'Сам файл от удаления не сломается, но макрос может перестать работать. ' +
+            'Если макросами пользуются, просмотрите модули (Alt+F11) на предмет <code>Range("Имя")</code> ' +
+            'и <code>Names("Имя")</code> перед шагом 2.';
+    }
 
     const total = groups.reduce((a, g) => a + g.names.length, 0);
     $('#cleanup-empty').hidden = total > 0;
@@ -4451,7 +4536,8 @@ function cleanupCSV() {
     (APP.cleanupGroups || []).forEach(g => g.names.forEach(n => {
         const u = n.usedIn || {};
         const where = [u.f ? 'формулы ' + u.f : '', u.cf ? 'условное форматирование ' + u.cf : '',
-                       u.dv ? 'проверка данных ' + u.dv : '', u.chart ? 'диаграммы ' + u.chart : '']
+                       u.dv ? 'проверка данных ' + u.dv : '', u.chart ? 'диаграммы ' + u.chart : '',
+                       u.service ? 'служебное крепление: ' + (n.serviceWhy || 'да') : '']
                       .filter(Boolean).join(', ');
         L.push([n.name, g.group.label, RISK[g.group.risk].label, n.ref, n.uses, where]
             .map(x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"').join(';'));
