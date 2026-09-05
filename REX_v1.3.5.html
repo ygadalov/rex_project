@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.3.4 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.3.5 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1316,7 +1316,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.3.4';
+const APP_VERSION = '1.3.5';
 
 const APP = {
     books: [],          // разобранные книги
@@ -5050,6 +5050,40 @@ const LAYOUTS = {
     'dagre-tb': { name: 'dagre', rankDir: 'TB', nodeSep: 26, rankSep: 76, edgeSep: 12, animate: false, fit: true, padding: 40 },
     'cose':     { name: 'cose', animate: false, fit: true, padding: 40, nodeRepulsion: 9000, idealEdgeLength: 90, nestingFactor: 1.1 },
 };
+
+/**
+ * Одиночки (узлы без единой связи) для силовой раскладки — каждый отдельная
+ * «компонента», и cose разбрасывает их по кругу вокруг основного кластера.
+ * На книге с полусотней битых имён это растягивало холст до 4500 px: сам граф
+ * ужимался до нечитаемого масштаба, хотя рисовать там было нечего.
+ * Поэтому после раскладки собираем их в компактную сетку под графом —
+ * детерминированно, без подбора параметров физики.
+ */
+const ORPHAN_PACK_FROM = 6;      // меньше — не мешают, перекладывать незачем
+
+function packOrphans(cy) {
+    const solo = cy.nodes().filter(n => !n.isParent() && n.degree(false) === 0);
+    if (solo.length < ORPHAN_PACK_FROM) return false;
+    const rest = cy.nodes().filter(n => !n.isParent() && n.degree(false) > 0);
+    if (!rest.length) return false;
+
+    const bb = rest.boundingBox();
+    const stepX = 150, stepY = 50;
+    const cols = Math.max(3, Math.min(14, Math.round(bb.w / stepX) || 3));
+    solo.forEach((n, i) => n.position({
+        x: bb.x1 + (i % cols) * stepX,
+        y: bb.y2 + 90 + Math.floor(i / cols) * stepY,
+    }));
+    return true;
+}
+
+/** Раскладка + упаковка одиночек + вписывание: всегда вместе, иначе разъедется. */
+function runLayout(cy, name) {
+    const l = cy.layout(Object.assign({}, LAYOUTS[name], { fit: false }));
+    l.run();
+    if (packOrphans(cy)) cy.fit(undefined, 40);
+    else cy.fit(undefined, (LAYOUTS[name] || {}).padding || 40);
+}
 let currentLayout = 'dagre-lr';
 
 /* Раскладка «Потоком» показывает направление данных и читается идеально, пока узлов
@@ -5195,8 +5229,9 @@ function renderGraph() {
             { selector: 'edge.hl-down', style: { 'line-color': '#db2777', 'target-arrow-color': '#db2777', 'opacity': 1, 'width': 3 } },
             { selector: 'edge.hl-self', style: { 'line-color': '#334155', 'target-arrow-color': '#334155', 'opacity': 1, 'width': 2.5 } },
         ],
-        layout: LAYOUTS[currentLayout],
+        layout: { name: 'preset' },   // раскладку запускаем сами: см. runLayout
     });
+    runLayout(cy, currentLayout);
 
     /* Подсказка прямо на линии: понять связь наведением проще, чем сверяясь
        с легендой в углу. Показываем тип связи, её направление и вес. */
@@ -5566,7 +5601,7 @@ const TYPE_LAYERS = [
     { id: 'store', title: 'Расположение в книге', types: ['sheet', 'table', 'name'] },
     // Сводная агрегирует, мера считает, таблица модели хранит — общее у них
     // одно: всё это построено поверх данных и показывается человеку.
-    { id: 'out',   title: 'Аналитика и отчётность', types: ['pivot', 'modeltable', 'measure'] },
+    { id: 'out',   title: 'Аналитический слой',   types: ['pivot', 'modeltable', 'measure'] },
 ];
 
 const NODE_GLYPHS = {
@@ -5983,7 +6018,7 @@ function initEvents() {
         b.classList.add('active');
         APP.userLayout = true;          // выбрал человек — больше не переключаем автоматически
         currentLayout = b.dataset.layout;
-        if (window.__cy) window.__cy.layout(LAYOUTS[currentLayout]).run();
+        if (window.__cy) runLayout(window.__cy, currentLayout);
     });
     ['#opt-groups', '#opt-orphans', '#opt-invisible', '#opt-dead'].forEach(sel => { $(sel).onchange = renderGraph; });
     $('#type-filter').addEventListener('click', e => {
@@ -5998,7 +6033,7 @@ function initEvents() {
         if (e.target.closest('#btn-graph-defaults')) { buildTypeFilter(true); renderGraph(); }
     });
     $('#btn-graph-fit').onclick   = () => { if (window.__cy) window.__cy.fit(undefined, 40); };
-    $('#btn-graph-reset').onclick = () => { clearFocus(); if (window.__cy) window.__cy.layout(LAYOUTS[currentLayout]).run(); };
+    $('#btn-graph-reset').onclick = () => { clearFocus(); if (window.__cy) runLayout(window.__cy, currentLayout); };
     $('#btn-graph-png').onclick   = () => {
         if (!window.__cy) return;
         const uri = window.__cy.png({ full: true, scale: 2, bg: '#ffffff' });
