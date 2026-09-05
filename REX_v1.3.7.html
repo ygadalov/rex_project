@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.3.6 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.3.7 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -659,7 +659,8 @@ tr.row-link { cursor: pointer; }
 }
 
 /* ═══════════════════ ТЕПЛОВАЯ КАРТА ЛИСТА ═══════════════════ */
-.heat-wrap { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.heat-wrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+.heat-wrap > div:last-child { flex: 1; min-width: 260px; }
 .heat-canvas-box { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; line-height: 0; }
 .heat-canvas-box canvas { display: block; image-rendering: pixelated; max-width: 100%; }
 .heat-legend { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
@@ -1097,7 +1098,9 @@ table.matrix td.cell[data-n] { cursor: default; }
     <div class="card" id="sheet-detail-card" hidden>
         <div class="card-title">
             <span id="sheet-detail-title"></span>
-            <span class="hint">тепловая карта: каждый пиксель — ячейка</span>
+            <span class="hint" id="heat-hint">тепловая карта: каждый пиксель — ячейка</span>
+            <span style="flex:1"></span>
+            <button class="btn btn-sm btn-outline" id="sheet-scope-clear">Показать все листы ✕</button>
         </div>
         <div class="heat-wrap">
             <div class="heat-canvas-box"><canvas id="heat-canvas" width="240" height="240"></canvas></div>
@@ -1316,7 +1319,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.3.6';
+const APP_VERSION = '1.3.7';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1330,6 +1333,7 @@ const APP = {
     showHiddenNames: false, // показывать ли скрытые имена — по умолчанию нет, их бывают тысячи
     cleanupGroups: null,    // разбор скрытых имён по происхождению
     cleanupPick: null,      // какие группы человек выбрал к удалению
+    sheetScope: null,       // выбранный лист: к нему сужаются таблицы и имена ниже
     impactFilter: null,     // уровень влияния, по которому фильтруется список листов
     impactIgnore: null,     // оговорки, снятые вручную
     impactCache: null,      // разбор влияния — пересчитывается при смене оговорок
@@ -3621,13 +3625,18 @@ function renderSheets() {
         allTables.push(Object.assign({ book: b.fileName, bookIdx: bi }, t))));
     $('#tables-hint').textContent = allTables.length ? allTables.length + ' шт.' : '';
     const tblId = t => 't:' + t.bookIdx + ':' + t.name;
+    /* Выбранный лист сужает и списки ниже: разбирая лист, человек смотрит на
+       его таблицы и имена, а не на всю книгу. Сброс — кнопкой в карточке. */
+    const scope = APP.sheetScope;
     const shownTables = allTables.filter(t => {
+        if (scope && !(t.bookIdx === scope.bookIdx && t.sheet === scope.name)) return false;
         if (!APP.impactFilter || APP.impactFilter === 'all') return true;
         const id = tblId(t);
         return APP.graph.index.has(id) && impactOf(id).level === APP.impactFilter;
     });
-    if (APP.impactFilter && APP.impactFilter !== 'all')
-        $('#tables-hint').textContent = fmtNum(shownTables.length) + ' из ' + fmtNum(allTables.length);
+    if (scope || (APP.impactFilter && APP.impactFilter !== 'all'))
+        $('#tables-hint').textContent = fmtNum(shownTables.length) + ' из ' + fmtNum(allTables.length) +
+            (scope ? ' · только лист «' + scope.name + '»' : '');
     $('#tables-tbody').innerHTML = shownTables.map(t =>
         '<tr><td><strong>' + esc(t.name) + '</strong></td>' +
         '<td>' + esc(t.sheet || '—') + '</td>' +
@@ -3639,7 +3648,8 @@ function renderSheets() {
             : '<span class="pill pill-gray">лист</span>') + '</td>' +
         '<td class="muted" style="font-size:11.5px">' + esc((t.columns || []).slice(0, 8).join(', ')) + ((t.columns || []).length > 8 ? '…' : '') + '</td></tr>'
     ).join('') || '<tr><td colspan="7" class="empty-state">' +
-        (APP.impactFilter && APP.impactFilter !== 'all' ? 'По этому уровню таблиц нет'
+        (scope ? 'На листе «' + esc(scope.name) + '» умных таблиц нет'
+            : APP.impactFilter && APP.impactFilter !== 'all' ? 'По этому уровню таблиц нет'
             : 'Умных таблиц нет' + (APP.books.some(b => b.format === 'xls') ? ' (формат .xls их не поддерживает)' : '')) +
         '</td></tr>';
 
@@ -3647,16 +3657,25 @@ function renderSheets() {
        Их тысячами тянут за собой надстройки и копирование листов из чужих шаблонов.
        Показывать их вперемешку с рабочими — значит выдавать пятизначную цифру там,
        где пользователь видит полсотни имён. По умолчанию их нет в списке. */
+    // Имя относится к листу, если у него такая область ИЛИ его ссылка ведёт на лист
+    const onScope = n => {
+        if (!scope) return true;
+        if (n.bookIdx !== scope.bookIdx) return false;
+        if (n.scope === scope.name) return true;
+        return String(n.ref || '').replace(/'/g, '').indexOf(scope.name + '!') !== -1;
+    };
     const everyName = [];
-    APP.books.forEach(b => (b.names || []).filter(n => !n.builtin).forEach(n => everyName.push(n)));
-    const hiddenNames = everyName.filter(n => n.hidden);
-    const visibleNames = everyName.filter(n => !n.hidden);
+    APP.books.forEach((b, bi) => (b.names || []).filter(n => !n.builtin)
+        .forEach(n => everyName.push(Object.assign({ bookIdx: bi }, n))));
+    const hiddenNames = everyName.filter(n => n.hidden && onScope(n));
+    const visibleNames = everyName.filter(n => !n.hidden && onScope(n));
     const allNames = APP.showHiddenNames ? everyName : visibleNames;
 
-    $('#names-note').textContent = hiddenNames.length
+    $('#names-note').textContent = (scope ? 'только лист «' + scope.name + '» · ' : '') + (hiddenNames.length
         ? 'видимых ' + fmtNum(visibleNames.length) + ' — столько же покажет Ctrl+F3 · скрытых ' +
           fmtNum(hiddenNames.length) + ' (их создают надстройки и шаблоны, Диспетчер имён их не показывает)'
-        : (visibleNames.length ? 'все ' + fmtNum(visibleNames.length) + ' видны в Ctrl+F3' : '');
+        : (visibleNames.length ? 'все ' + fmtNum(visibleNames.length) + ' видны в Ctrl+F3'
+           : scope ? 'имён, связанных с этим листом, нет' : ''));
     const nht = $('#names-hidden-toggle');
     nht.hidden = !hiddenNames.length;
     nht.textContent = APP.showHiddenNames
@@ -3690,13 +3709,24 @@ function showSheetDetail(bookIdx, name) {
     if (!sh) return;
     APP.activeSheet = sh;
 
+    APP.sheetScope = { bookIdx, name };
     $('#sheet-detail-card').hidden = false;
     $('#sheet-detail-title').textContent = 'Лист «' + name + '»';
 
+    /* Карта была квадратом 240×240 с общим целым масштабом: лист в пять колонок
+       и шестьдесят строк превращался в полоску шириной 15 px, а справа пустовало
+       пол-экрана. Теперь коробка вытянута под реальную страницу, масштаб по осям
+       считается отдельно, а вытягивание узкой карты ограничено тройкой — иначе
+       пропорции листа перестанут быть узнаваемыми. */
+    const HEAT_BOX_W = 620, HEAT_BOX_H = 400, CELL_MAX = 16;
     const heat = sh.heat || { w: 1, h: 1, data: new Uint8Array(1) };
     const cv = $('#heat-canvas');
-    const scale = Math.max(1, Math.floor(240 / Math.max(heat.w, heat.h)));
-    cv.width = heat.w * scale; cv.height = heat.h * scale;
+    // Ширину заполняем, высоту держим в коробке. Ячейку крупнее CELL_MAX не
+    // раздуваем: лист из трёх колонок не должен превращаться в три полотнища.
+    const sx = Math.min(HEAT_BOX_W / heat.w, CELL_MAX * 3);
+    const sy = Math.min(HEAT_BOX_H / heat.h, CELL_MAX);
+    cv.width = Math.max(8, Math.round(heat.w * sx));
+    cv.height = Math.max(8, Math.round(heat.h * sy));
     const ctx = cv.getContext('2d');
     ctx.fillStyle = HEAT_COLORS[0];
     ctx.fillRect(0, 0, cv.width, cv.height);
@@ -3704,8 +3734,11 @@ function showSheetDetail(bookIdx, name) {
         const v = heat.data[y * heat.w + x];
         if (!v) continue;
         ctx.fillStyle = HEAT_COLORS[v];
-        ctx.fillRect(x * scale, y * scale, scale, scale);
+        ctx.fillRect(Math.round(x * sx), Math.round(y * sy), Math.ceil(sx), Math.ceil(sy));
     }
+    $('#heat-hint').textContent = (sx / sy > 1.5)
+        ? 'тепловая карта: каждый пиксель — ячейка · лист узкий, поэтому растянут по ширине — пропорции не настоящие'
+        : 'тепловая карта: каждый пиксель — ячейка';
 
     const node = APP.graph.index.get('s:' + bookIdx + ':' + name);
     // Лист вместе с тем, что на нём лежит: иначе лист с умной таблицей выглядит тупиком
@@ -3733,6 +3766,8 @@ function showSheetDetail(bookIdx, name) {
         '<strong>Отдаёт данные в:</strong> ' + (downNames.length ? esc(downNames.join(', ')) : '<span class="muted">никуда</span>') +
         '<br><br><button class="btn btn-outline btn-sm" data-focus-node="' + esc((node || {}).id || '') + '">Показать в графе →</button>';
 
+    // Списки ниже сужаются под выбранный лист — перерисовываем их здесь же
+    renderSheets();
     $('#sheet-detail-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -5941,6 +5976,12 @@ function initEvents() {
     /* ── конструктор очистки: выбор групп сразу пересобирает макрос,
           иначе непонятно, что именно даёт галочка */
     /* ── фильтр влияния: уровни и оговорки */
+    $('#sheet-scope-clear').onclick = () => {
+        APP.sheetScope = null;
+        APP.activeSheet = null;
+        $('#sheet-detail-card').hidden = true;
+        renderSheets();
+    };
     $('#imp-filter').addEventListener('click', e => {
         const b = e.target.closest('button[data-imp]');
         if (!b) return;
