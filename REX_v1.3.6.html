@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.3.5 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.3.6 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1316,7 +1316,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.3.5';
+const APP_VERSION = '1.3.6';
 
 const APP = {
     books: [],          // разобранные книги
@@ -4558,6 +4558,11 @@ function buildCleanupMacro(selectedIds, opts) {
    есть макросы или ДВССЫЛ, честный максимум — жёлтый.
 */
 
+/* Доля формул, начиная с которой лист считается расчётным, а не хранилищем.
+   Взято по разбору боевых книг: у листов-справочников доля 0.01…0.08,
+   у расчётных — 0.35 и выше. Порог посередине с большим запасом в обе стороны. */
+const FORMULA_SHARE = 0.2;
+
 const IMPACT = {
     none:   { id: 'none',   dot: '🟢', label: 'ни на что не влияет',    color: '#16a34a' },
     maybe:  { id: 'maybe',  dot: '🟡', label: 'скорее всего не влияет', color: '#d97706' },
@@ -4636,13 +4641,30 @@ function computeImpact() {
         family.forEach(id => APP.graph.edges.forEach(e => {
             if (e.type !== 'contains' && e.target === id && !family.has(e.source)) consumes = true;
         }));
+        /* «Считает» — не «есть хоть одна формула». Лист-справочник с девятью
+           формулами на семи десятках ячеек хранит данные, а не считает, и
+           называть его конечным результатом — вводить в заблуждение. Поэтому
+           смотрим долю: формулы должны занимать хотя бы пятую часть
+           заполненных ячеек. Порог один и назван вслух, чтобы не быть
+           скрытой магической константой. */
         const ref = n.ref || {};
-        const computes = n.type === 'sheet' && (ref.formulaCount || 0) > 0;
+        const ф = ref.formulaCount || 0;
+        const заполнено = ф + (ref.constCount || 0) + (ref.textCount || 0);
+        const доляФормул = заполнено ? ф / заполнено : 0;
+        const computes = n.type === 'sheet' && ф > 0 && доляФормул >= FORMULA_SHARE;
+
+        // Формулы есть, но их мало: до зелёного такой лист не поднимаем —
+        // пусть человек посмотрит сам, вдруг они всё-таки нужны.
+        if (n.type === 'sheet' && ф > 0 && !computes && !affected.size && !consumes) {
+            caveats.push({ id: 'few-formulas', title: 'На листе есть формулы: ' + fmtNum(ф),
+                text: 'Их меньше ' + Math.round(FORMULA_SHARE * 100) + '% заполненных ячеек, поэтому лист похож на данные, ' +
+                      'а не на расчёт. Но формулы есть — стоит взглянуть, прежде чем удалять.' });
+        }
 
         const level = affected.size ? 'used'
                     : (consumes || computes) ? 'output'
                     : caveats.length ? 'maybe' : 'none';
-        res.set(n.id, { level, affected, family, caveats, consumes, computes });
+        res.set(n.id, { level, affected, family, caveats, consumes, computes, доляФормул });
     });
     return res;
 }
@@ -4661,7 +4683,9 @@ function impactBadge(id) {
     const tip = im.level === 'used'
         ? 'Данные отсюда читают: ' + names.join(', ') + (im.affected.size > 6 ? ' и ещё ' + (im.affected.size - 6) : '')
         : im.level === 'output'
-        ? 'Из него никто не читает, но он ' + (im.computes ? 'сам считает по формулам' : 'сам берёт данные из книги') +
+        ? 'Из него никто не читает, но он ' + (im.computes
+              ? 'сам считает: формулы занимают ' + Math.round((im.доляФормул || 0) * 100) + '% заполненных ячеек'
+              : 'сам берёт данные из книги') +
           ' — похоже на конечный результат, а не на мусор'
         : im.caveats.length
         ? 'Ссылок не найдено, но: ' + im.caveats.map(c => c.title).join(' · ')
