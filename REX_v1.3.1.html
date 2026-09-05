@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.3.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.3.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -551,6 +551,11 @@ tr.row-link { cursor: pointer; }
     background: none; border: none; padding: 0; cursor: pointer; font-family: inherit;
     font-size: 10.5px; font-weight: 700; color: var(--primary); text-transform: none; letter-spacing: 0;
 }
+.lg-marks { display: flex; flex-direction: column; gap: 4px; }
+.lg-mark { display: flex; align-items: flex-start; gap: 7px; font-size: 11px; color: var(--text-secondary); font-weight: 600; }
+.lg-mark svg { flex-shrink: 0; margin-top: 1px; }
+.lg-mark span { font-weight: 500; color: var(--text-muted); line-height: 1.45; }
+.lg-mark b { color: var(--text-secondary); font-weight: 700; }
 .lg-matrix { margin-top: 5px; display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; }
 .lg-mrow { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; line-height: 1.5; }
 .lg-mrow .lg-mfrom { font-weight: 700; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; }
@@ -993,6 +998,10 @@ table.matrix td.cell[data-n] { cursor: default; }
                         <div class="lg-title lg-title-types">Типы связей · цвет не действует</div>
                         <div class="lg-edges" id="lg-edges"></div>
                         <div class="lg-focus" id="lg-focus" hidden></div>
+                        <div class="lg-sub" id="lg-marks-box" hidden>
+                            <div class="lg-title">Пометки на узлах</div>
+                            <div class="lg-marks" id="lg-marks"></div>
+                        </div>
                         <div class="lg-sub">
                             <button class="lg-more" id="lg-more" aria-expanded="false">Что с чем может быть связано ▾</button>
                             <div class="lg-matrix" id="lg-matrix" hidden></div>
@@ -1275,7 +1284,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 
 const APP = {
     books: [],          // разобранные книги
@@ -5611,6 +5620,40 @@ function buildLegend() {
         focusRow('#334155', 'внутри выбранного') +
         '<div class="lg-focus-note">Тип конкретной линии виден при наведении. ' +
         'Снять выбор — × в поле фильтра.</div>';
+
+    /* ── пометки на узлах. Красная рамка была самым непонятным элементом графа:
+          сигнал есть, а объяснения нет нигде. Показываем только то, что в книге
+          действительно встречается, и сразу считаем, сколько таких объектов. */
+    const marks = [];
+    const warnNodes = APP.graph.nodes.filter(n => !n.isParent && (
+        (n.type === 'sheet' && n.ref && n.ref.errorCount > 0) ||
+        (n.type === 'name' && n.ref && n.ref.broken) ||
+        (n.type === 'extbook' && n.ref && n.ref.local)));
+    const hiddenNodes = APP.graph.nodes.filter(n => !n.isParent &&
+        n.type === 'sheet' && n.state && n.state !== 'visible');
+
+    const markSvg = (dash, color) =>
+        '<svg width="26" height="18" viewBox="0 0 26 18" aria-hidden="true">' +
+        '<rect x="2.5" y="2.5" width="21" height="13" rx="3" fill="#e0f2fe" ' +
+        'stroke="' + color + '" stroke-width="2.5"' + (dash ? ' stroke-dasharray="4 3"' : '') + '/></svg>';
+
+    if (warnNodes.length) {
+        const по = {};
+        warnNodes.forEach(n => { по[n.type] = (по[n.type] || 0) + 1; });
+        const чего = Object.entries(по).map(([t, c]) =>
+            ((NODE_TYPES[t] || {}).label || t).toLowerCase() + ' — ' + fmtNum(c)).join(', ');
+        marks.push('<div class="lg-mark">' + markSvg(false, '#dc2626') +
+            '<span><b>Красная рамка — внутри есть ошибки.</b> Лист — ячейки с #ССЫЛКА!/#Н/Д, ' +
+            'имя — ссылка на #ССЫЛКА!, внешняя книга — путь на локальном диске. Сейчас: ' + esc(чего) + '. ' +
+            'У таблиц, сводных и запросов такой рамки не бывает: ошибки считаются по листу.</span></div>');
+    }
+    if (hiddenNodes.length) {
+        marks.push('<div class="lg-mark">' + markSvg(true, '#94a3b8') +
+            '<span><b>Пунктирная рамка — лист скрыт.</b> Их ' + fmtNum(hiddenNodes.length) +
+            '. Скрытые листы чаще служебные: к ним обращаются из макросов и формул с ДВССЫЛ.</span></div>');
+    }
+    $('#lg-marks-box').hidden = !marks.length;
+    $('#lg-marks').innerHTML = marks.join('');
 
     /* ── «что с чем может быть связано» — ответ на вопрос, почему тип не светится */
     const nb = typeNeighbours();
