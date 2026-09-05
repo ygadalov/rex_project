@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.4.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.4.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -527,6 +527,21 @@ tr.row-link { cursor: pointer; }
 .col-kind .ck-num { font-family: 'JetBrains Mono', monospace; color: var(--text-muted); }
 .col-row { cursor: pointer; }
 .col-row:hover { background: var(--border-light); }
+/* Раскрытая строка остаётся выделенной: блок под ней читают уже без курсора */
+.col-row.is-open > td { background: var(--primary-light); }
+.col-row.is-open > td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+.col-dhead { font-size: 12.5px; font-weight: 700; padding: 2px 0 6px; }
+.fx-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.fx-chip {
+    display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+    padding: 1px 6px; border-radius: 5px; background: var(--bg); border: 1px solid var(--border-light);
+    font-size: 11px; font-weight: 600; color: var(--text-secondary);
+}
+.fx-more { font-size: 11px; font-weight: 700; color: var(--text-muted); }
+.fx-sheet { color: #2563eb; font-weight: 700; }
+.fx-table { color: #059669; font-weight: 700; }
+.fx-name  { color: #4d7c0f; font-weight: 700; }
+.fx-ext   { color: #64748b; font-weight: 700; }
 .col-letter { font-family: 'JetBrains Mono', monospace; font-weight: 700; }
 .col-pat { font-family: 'JetBrains Mono', monospace; font-size: 11px; overflow-wrap: anywhere; color: var(--text-secondary); }
 .col-share { font-size: 10.5px; color: var(--text-muted); }
@@ -1186,7 +1201,7 @@ table.matrix td.cell[data-n] { cursor: default; }
                 <thead><tr>
                     <th>Колонка</th><th>Заголовок</th><th>Строки</th>
                     <th class="num-cell">Формул</th><th class="num-cell">Шаблонов</th>
-                    <th>Основной шаблон</th><th>Разрывы</th>
+                    <th>Основной шаблон</th><th>Ссылается на</th><th>Разрывы</th>
                 </tr></thead>
                 <tbody id="col-tbody"></tbody>
             </table>
@@ -1366,7 +1381,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 
 const APP = {
     books: [],          // разобранные книги
@@ -2016,6 +2031,19 @@ function buildColumns(colStats, colHeads) {
         // Константы считаем разрывами только внутри диапазона формул: то, что
         // стоит выше или ниже, — это шапка и итоги, а не подмена формулы.
         const gaps = (cs.constRows || []).filter(r => r > cs.minF && r < cs.maxF);
+        /* Куда колонка тянется. Разбираем не шаблон, а исходную формулу: в
+           шаблоне строки уже заменены смещениями, и разборщик ссылок на нём
+           работать не должен. Восьми шаблонов хватает: остальные — редкие
+           исключения, а не другой источник данных. */
+        const refs = { sheets: new Set(), tables: new Set(), names: new Set(), ext: new Set() };
+        pats.forEach(p => {
+            const r = scanFormula(p.sample);
+            r.sheets.forEach(x => refs.sheets.add(x));
+            r.tables.forEach(x => refs.tables.add(x));
+            r.names.forEach(x => refs.names.add(x));
+            r.ext.forEach(x => refs.ext.add(x));
+        });
+
         const distinct = cs.pat.size;
         const over = cs.patOver;                     // формулы сверх сохранённых шаблонов
         const top = pats[0] ? pats[0].n / cs.f : 0;
@@ -2028,6 +2056,8 @@ function buildColumns(colStats, colHeads) {
         out.push({
             col: c, letter: colLetter(c), header: (colHeads.get(c) || {}).text || '',
             formulas: cs.f, consts: cs.k, gaps, distinct, over, patterns: pats,
+            refs: { sheets: Array.from(refs.sheets), tables: Array.from(refs.tables),
+                    names: Array.from(refs.names), ext: Array.from(refs.ext) },
             share: top, from: cs.minF, to: cs.maxF, kind,
         });
     });
@@ -4908,6 +4938,41 @@ const COL_KINDS = {
 
 const COL_ROWS_SHOWN = 300;
 
+/* Ссылки внутри формулы: лист, умная таблица, внешняя книга, именованный
+   диапазон. Красим до экранирования — иначе кавычки в 'Лист с пробелом'!
+   успевают превратиться в сущности, и регулярка их уже не узнаёт. */
+const RE_FML_REF = "(\\[\\d+\\])|('[^']*'!|[A-Za-zА-Яа-яЁё0-9_.]+!)|([A-Za-zА-Яа-яЁё0-9_.]{2,})(?=\\[)";
+
+function formulaHtml(f, names) {
+    const src = String(f == null ? '' : f);
+    const extra = (names && names.length)
+        ? '|(' + names.map(escapeRe).join('|') + ')' : '';
+    const re = new RegExp(RE_FML_REF + extra, 'g');
+    let out = '', last = 0, m;
+    while ((m = re.exec(src)) !== null) {
+        if (m.index < last) continue;
+        out += esc(src.slice(last, m.index));
+        const cls = m[1] ? 'fx-ext' : m[2] ? 'fx-sheet' : m[3] ? 'fx-table' : 'fx-name';
+        out += '<span class="' + cls + '">' + esc(m[0]) + '</span>';
+        last = m.index + m[0].length;
+    }
+    return out + esc(src.slice(last));
+}
+
+/** Чипы «куда смотрит колонка»: тип + имя, как на графе. */
+function refChips(refs, limit) {
+    const all = []
+        .concat(refs.sheets.map(x => ({ t: 'sheet', x })))
+        .concat(refs.tables.map(x => ({ t: 'table', x })))
+        .concat(refs.names.map(x => ({ t: 'name', x })))
+        .concat(refs.ext.map(x => ({ t: 'extbook', x })));
+    if (!all.length) return '<span class="muted">только свой лист</span>';
+    const shown = limit ? all.slice(0, limit) : all;
+    return shown.map(r => '<span class="fx-chip" title="' + esc((NODE_TYPES[r.t] || {}).label + ': ' + r.x) + '">' +
+        nodeGlyph(r.t) + esc(r.x.length > 22 ? r.x.slice(0, 21) + '…' : r.x) + '</span>').join('') +
+        (limit && all.length > limit ? '<span class="fx-more">+' + (all.length - limit) + '</span>' : '');
+}
+
 /** Лист, по которому идёт разбор: выбранный в списке или первый подходящий. */
 function colSheet() {
     const all = [];
@@ -4978,20 +5043,29 @@ function renderColumns() {
             '<td><span class="col-pat">' + esc(String(top.sample || '').slice(0, 70)) +
                 (String(top.sample || '').length > 70 ? '…' : '') + '</span>' +
                 '<br><span class="col-share">' + Math.round(c.share * 100) + '% ячеек колонки</span></td>' +
+            '<td class="fx-chips">' + refChips(c.refs, 2) + '</td>' +
             '<td class="col-gapcell">' + (c.gaps.length
                 ? c.gaps.slice(0, 4).map(r => c.letter + (r + 1)).join(', ') + (c.gaps.length > 4 ? ' и ещё ' + (c.gaps.length - 4) : '')
                 : '<span class="muted">—</span>') + '</td></tr>';
     }).join('') + (cols.filter(c => pick === 'all' || c.kind === pick).length > COL_ROWS_SHOWN
-        ? '<tr><td colspan="7" class="muted" style="text-align:center;padding:10px">показаны первые ' +
+        ? '<tr><td colspan="8" class="muted" style="text-align:center;padding:10px">показаны первые ' +
           COL_ROWS_SHOWN + ' — полный список в CSV</td></tr>' : '');
 }
 
 /** Развёрнутая строка: все шаблоны колонки с адресами. */
 function colDetailRow(c) {
+    // Заголовок повторяем: развёрнутый блок читают уже без курсора на строке,
+    // и «к чему это относится» должно быть видно в нём самом.
+    const head = '<div class="col-dhead"><span class="col-letter" style="color:' + COL_KINDS[c.kind].color + '">' +
+        c.letter + '</span> ' + esc(c.header || 'без заголовка') +
+        '<span class="muted"> · строки ' + (c.from + 1) + '–' + (c.to + 1) +
+        ' · формул ' + fmtNum(c.formulas) + ' · шаблонов ' + fmtNum(c.distinct) + (c.over ? '+' : '') + '</span></div>';
+    const refs = '<div class="col-pline"><span class="cp-where">ссылается на</span>' +
+        '<span class="cp-src fx-chips">' + refChips(c.refs) + '</span></div>';
     const lines = c.patterns.map(p =>
         '<div class="col-pline"><span class="cp-where">' + c.letter + (p.first + 1) +
         (p.last !== p.first ? '–' + c.letter + (p.last + 1) : '') + ' ×' + fmtNum(p.n) + '</span>' +
-        '<span class="cp-src">' + esc(p.sample) + '</span></div>').join('');
+        '<span class="cp-src">' + formulaHtml(p.sample, c.refs.names) + '</span></div>').join('');
     const tail = c.over
         ? '<div class="col-pline"><span class="cp-where">ещё ' + fmtNum(c.over) + '</span>' +
           '<span class="cp-src muted">формул не совпали ни с одним из показанных шаблонов</span></div>' : '';
@@ -4999,7 +5073,8 @@ function colDetailRow(c) {
         ? '<div class="col-pline"><span class="cp-where">константы</span><span class="cp-src">' +
           c.gaps.map(r => c.letter + (r + 1)).join(', ') +
           ' — значения вбиты руками посреди формул</span></div>' : '';
-    return '<tr class="col-detail"><td colspan="7"><div class="col-plist">' + lines + tail + gaps + '</div></td></tr>';
+    return '<tr class="col-detail"><td colspan="8">' + head +
+        '<div class="col-plist">' + refs + lines + tail + gaps + '</div></td></tr>';
 }
 
 function columnsCSV() {
@@ -6271,8 +6346,10 @@ function initEvents() {
         const row = e.target.closest('.col-row');
         if (!row) return;
         const next = row.nextElementSibling;
-        if (next && next.classList.contains('col-detail')) { next.remove(); return; }
+        if (next && next.classList.contains('col-detail')) { next.remove(); row.classList.remove('is-open'); return; }
         $$('.col-detail').forEach(x => x.remove());
+        $$('.col-row.is-open').forEach(x => x.classList.remove('is-open'));
+        row.classList.add('is-open');
         const cur = colSheet();
         const c = ((cur || {}).sh.columns || []).find(x => x.col === +row.dataset.col);
         if (c) row.insertAdjacentHTML('afterend', colDetailRow(c));
