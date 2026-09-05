@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.2.4 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.3.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -497,6 +497,32 @@ tr.row-link { cursor: pointer; }
 .lg-edge.is-static:hover { background: none; }
 .lg-focus-note { font-size: 10px; color: var(--text-muted); line-height: 1.45; padding: 2px 6px 0; font-weight: 500; }
 
+/* Влияние: бейдж уровня и фильтр по нему */
+.imp-badge {
+    display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+    font-size: 11px; font-weight: 700; color: var(--imp); cursor: help;
+}
+.imp-filter { display: flex; gap: 7px; flex-wrap: wrap; }
+.imp-filter button {
+    display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+    font: inherit; font-size: 12px; font-weight: 600; color: var(--text-secondary);
+    transition: background .12s, border-color .12s;
+}
+.imp-filter button:hover { background: var(--border-light); }
+.imp-filter button.active { border-color: var(--imp, var(--primary)); background: color-mix(in srgb, var(--imp, var(--primary)) 9%, transparent); color: var(--text); }
+.imp-filter .impf-num { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-muted); }
+.imp-caveats { margin-top: 12px; display: flex; flex-direction: column; gap: 5px; }
+.imp-cav {
+    display: flex; align-items: flex-start; gap: 9px; padding: 8px 11px; border-radius: 8px;
+    background: #fffbeb; border: 1px solid #fde68a; font-size: 12px; line-height: 1.5;
+}
+.imp-cav.off { background: var(--bg); border-color: var(--border); opacity: .6; }
+.imp-cav input { margin-top: 2px; width: 14px; height: 14px; flex-shrink: 0; accent-color: var(--primary); }
+.imp-cav b { display: block; margin-bottom: 2px; }
+.imp-cav .cav-note { color: var(--text-muted); }
+.imp-none { padding: 9px 11px; border-radius: 8px; background: #f0fdf4; border: 1px solid #bbf7d0; font-size: 12px; color: #166534; }
+
 /* Очистка: группа мусора — строка с чекбоксом, риском и объяснением */
 .cl-groups { display: flex; flex-direction: column; gap: 6px; }
 .cl-group {
@@ -937,6 +963,7 @@ table.matrix td.cell[data-n] { cursor: default; }
             <label class="chk" title="Показывать листы внутри рамки книги"><input type="checkbox" id="opt-groups" checked> Группировать по книгам</label>
             <label class="chk" title="Объекты, у которых нет ни одной связи на графе"><input type="checkbox" id="opt-orphans" checked> Показывать несвязанные</label>
             <label class="chk" title="INDIRECT/OFFSET и подобные — ссылки, которые собираются во время расчёта"><input type="checkbox" id="opt-invisible" checked> «Невидимые» связи</label>
+            <label class="chk" title="Оставить на холсте только объекты, из которых никто не читает данные"><input type="checkbox" id="opt-dead"> Только «ни на что не влияет»</label>
             <div style="flex:1"></div>
             <button class="btn btn-outline btn-sm" id="btn-graph-fit" title="Вписать в экран">
                 <svg viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/></svg>
@@ -993,6 +1020,16 @@ table.matrix td.cell[data-n] { cursor: default; }
         <h1 class="page-title">Листы и таблицы <span class="subtitle">инвентарь книги</span></h1>
     </div>
     <div class="card">
+        <div class="card-title">Что можно удалить
+            <span class="hint" id="imp-sub"></span>
+            <span style="flex:1"></span>
+            <button class="btn btn-sm btn-outline" id="btn-imp-csv">План очистки (CSV)</button>
+        </div>
+        <div class="imp-filter" id="imp-filter"></div>
+        <div class="imp-caveats" id="imp-caveats"></div>
+    </div>
+
+    <div class="card">
         <div class="card-title">
             Листы
             <span class="hint">клик по строке — тепловая карта листа и его связи</span>
@@ -1003,6 +1040,7 @@ table.matrix td.cell[data-n] { cursor: default; }
                     <th class="sortable" data-sort="name">Лист</th>
                     <th class="sortable" data-sort="state">Статус</th>
                     <th class="sortable" data-sort="role">Роль</th>
+                    <th class="sortable" data-sort="impact">Влияние</th>
                     <th class="sortable num-cell" data-sort="formulas">Формул</th>
                     <th class="sortable num-cell" data-sort="consts">Констант</th>
                     <th class="sortable num-cell" data-sort="errors">Ошибок</th>
@@ -1039,7 +1077,7 @@ table.matrix td.cell[data-n] { cursor: default; }
         <div class="card-title">Умные таблицы (ListObject) <span class="hint" id="tables-hint"></span></div>
         <div class="table-box">
             <table class="wide">
-                <thead><tr><th>Таблица</th><th>Лист</th><th>Диапазон</th><th class="num-cell">Колонок</th><th>Источник</th><th>Колонки</th></tr></thead>
+                <thead><tr><th>Таблица</th><th>Лист</th><th>Влияние</th><th>Диапазон</th><th class="num-cell">Колонок</th><th>Источник</th><th>Колонки</th></tr></thead>
                 <tbody id="tables-tbody"></tbody>
             </table>
         </div>
@@ -1237,7 +1275,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.2.4';
+const APP_VERSION = '1.3.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1251,6 +1289,9 @@ const APP = {
     showHiddenNames: false, // показывать ли скрытые имена — по умолчанию нет, их бывают тысячи
     cleanupGroups: null,    // разбор скрытых имён по происхождению
     cleanupPick: null,      // какие группы человек выбрал к удалению
+    impactFilter: null,     // уровень влияния, по которому фильтруется список листов
+    impactIgnore: null,     // оговорки, снятые вручную
+    impactCache: null,      // разбор влияния — пересчитывается при смене оговорок
 };
 
 /* ───────────────────────── мелкие утилиты ───────────────────────── */
@@ -3481,6 +3522,8 @@ function sheetRows() {
         rows.push({
             book: b.fileName, bookIdx: bi, name: s.name, state: s.state,
             role: (node && node.role) || '—',
+            impact: node ? ({ used: 0, output: 1, maybe: 2, none: 3 })[impactOf(node.id).level] : 3,
+            impactLevel: node ? impactOf(node.id).level : 'none',
             formulas: s.formulaCount || 0, consts: s.constCount || 0, errors: s.errorCount || 0,
             inDeg: node ? node.inDeg : 0, outDeg: node ? node.outDeg : 0,
             dim: s.dimension || '—', sheet: s, nodeId: node ? node.id : null,
@@ -3508,7 +3551,9 @@ const ROLE_PILL = {
 };
 
 function renderSheets() {
-    const rows = sheetRows();
+    renderImpactPanel();
+    const rows = sheetRows().filter(r =>
+        !APP.impactFilter || APP.impactFilter === 'all' || r.impactLevel === APP.impactFilter);
     $('#sheets-tbody').innerHTML = rows.map(r => {
         const st = STATE_PILL[r.state] || ['pill-gray', r.state];
         const ro = ROLE_PILL[r.role] || ['pill-gray', r.role];
@@ -3516,6 +3561,7 @@ function renderSheets() {
             '<td><strong>' + esc(r.name) + '</strong>' + (APP.books.length > 1 ? '<br><span class="muted" style="font-size:11px">' + esc(r.book) + '</span>' : '') + '</td>' +
             '<td><span class="pill ' + st[0] + '">' + st[1] + '</span></td>' +
             '<td><span class="pill ' + ro[0] + '">' + ro[1] + '</span></td>' +
+            '<td>' + (r.nodeId ? impactBadge(r.nodeId) : '') + '</td>' +
             '<td class="num-cell">' + fmtNum(r.formulas) + '</td>' +
             '<td class="num-cell">' + fmtNum(r.consts) + '</td>' +
             '<td class="num-cell"' + (r.errors ? ' style="color:var(--danger);font-weight:700"' : '') + '>' + fmtNum(r.errors) + '</td>' +
@@ -3523,22 +3569,36 @@ function renderSheets() {
             '<td class="num-cell">' + fmtNum(r.outDeg) + '</td>' +
             '<td class="mono" style="font-size:11px;color:var(--text-muted)">' + esc(r.dim) + '</td>' +
             '</tr>';
-    }).join('') || '<tr><td colspan="9" class="empty-state">Листов не найдено</td></tr>';
+    }).join('') || '<tr><td colspan="10" class="empty-state">' +
+        (APP.impactFilter && APP.impactFilter !== 'all'
+            ? 'По этому уровню листов нет' : 'Листов не найдено') + '</td></tr>';
 
     const allTables = [];
-    APP.books.forEach(b => (b.tables || []).forEach(t => allTables.push(Object.assign({ book: b.fileName }, t))));
+    APP.books.forEach((b, bi) => (b.tables || []).forEach(t =>
+        allTables.push(Object.assign({ book: b.fileName, bookIdx: bi }, t))));
     $('#tables-hint').textContent = allTables.length ? allTables.length + ' шт.' : '';
-    $('#tables-tbody').innerHTML = allTables.map(t =>
+    const tblId = t => 't:' + t.bookIdx + ':' + t.name;
+    const shownTables = allTables.filter(t => {
+        if (!APP.impactFilter || APP.impactFilter === 'all') return true;
+        const id = tblId(t);
+        return APP.graph.index.has(id) && impactOf(id).level === APP.impactFilter;
+    });
+    if (APP.impactFilter && APP.impactFilter !== 'all')
+        $('#tables-hint').textContent = fmtNum(shownTables.length) + ' из ' + fmtNum(allTables.length);
+    $('#tables-tbody').innerHTML = shownTables.map(t =>
         '<tr><td><strong>' + esc(t.name) + '</strong></td>' +
         '<td>' + esc(t.sheet || '—') + '</td>' +
+        '<td>' + (APP.graph.index.has(tblId(t)) ? impactBadge(tblId(t)) : '') + '</td>' +
         '<td class="mono" style="font-size:11px">' + esc(t.ref || '—') + '</td>' +
         '<td class="num-cell">' + (t.columns || []).length + '</td>' +
         '<td>' + (t.tableType === 'queryTable'
             ? '<span class="pill pill-purple"><span class="pill-dot"></span>Power Query</span>'
             : '<span class="pill pill-gray">лист</span>') + '</td>' +
         '<td class="muted" style="font-size:11.5px">' + esc((t.columns || []).slice(0, 8).join(', ')) + ((t.columns || []).length > 8 ? '…' : '') + '</td></tr>'
-    ).join('') || '<tr><td colspan="6" class="empty-state">Умных таблиц нет' +
-        (APP.books.some(b => b.format === 'xls') ? ' (формат .xls их не поддерживает)' : '') + '</td></tr>';
+    ).join('') || '<tr><td colspan="7" class="empty-state">' +
+        (APP.impactFilter && APP.impactFilter !== 'all' ? 'По этому уровню таблиц нет'
+            : 'Умных таблиц нет' + (APP.books.some(b => b.format === 'xls') ? ' (формат .xls их не поддерживает)' : '')) +
+        '</td></tr>';
 
     /* Скрытые имена (hidden="1") Excel не показывает даже в Диспетчере имён (Ctrl+F3).
        Их тысячами тянут за собой надстройки и копирование листов из чужих шаблонов.
@@ -4443,6 +4503,209 @@ function buildCleanupMacro(selectedIds, opts) {
         .replace('%%PROTECT%%', pl.join('\n'));
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ВЛИЯНИЕ: что будет, если объект убрать
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Это самый опасный вывод, который REX вообще может сделать: по нему удаляют
+   листы. Поэтому уровня три, и «зелёный» не означает «удаляй смело» — он
+   означает «в файле не нашлось ни одной ссылки, и ни одна из оговорок не
+   применима». Оговорки перечислены явно и их видно в интерфейсе: пока в книге
+   есть макросы или ДВССЫЛ, честный максимум — жёлтый.
+*/
+
+const IMPACT = {
+    none:   { id: 'none',   dot: '🟢', label: 'ни на что не влияет',    color: '#16a34a' },
+    maybe:  { id: 'maybe',  dot: '🟡', label: 'скорее всего не влияет', color: '#d97706' },
+    output: { id: 'output', dot: '🔵', label: 'конечный результат',     color: '#2563eb' },
+    used:   { id: 'used',   dot: '🔴', label: 'влияет — не трогать',    color: '#dc2626' },
+};
+
+/* Оговорки — то, чего не видно в файле. Каждая может быть снята вручную:
+   человек знает про свою книгу больше, чем REX может прочитать. */
+function impactCaveats() {
+    const out = [];
+    const anyBook = f => APP.books.some(f);
+    const invisibleCells = APP.books.reduce((a, b) =>
+        a + (b.sheets || []).reduce((x, s) => x + (s.invisible || []).length, 0), 0);
+    if (invisibleCells) out.push({ id: 'indirect', scope: ['sheet', 'name', 'table'],
+        title: 'ДВССЫЛ / СМЕЩ в формулах — ' + fmtNum(invisibleCells) + ' шт.',
+        text: 'Такая формула собирает адрес во время расчёта. Куда она сошлётся, из файла не видно: целью может оказаться любой лист или диапазон.' });
+    if (anyBook(b => b.vba)) out.push({ id: 'vba', scope: ['sheet', 'name', 'table', 'query', 'pivot'],
+        title: 'В книге есть макросы VBA',
+        text: 'Код обращается к листам и именам по строке. Такой ссылки нет ни в формулах, ни в структуре файла.' });
+    if (anyBook(b => b.modelRaw)) out.push({ id: 'model', scope: ['sheet', 'table', 'modeltable', 'measure', 'query'],
+        title: 'Есть модель данных Power Pivot',
+        text: 'Выражения DAX и связи модели лежат в закрытом бинарном виде — REX их не читает. Таблица может питать меру, и этого не будет видно.' });
+    if (anyBook(b => (b.externalLinks || []).length)) out.push({ id: 'ext', scope: ['sheet', 'name', 'table'],
+        title: 'Книга связана с другими файлами',
+        text: 'Связь видно только с этой стороны. Другие книги могут ссылаться сюда, и такие ссылки в этом файле не хранятся.' });
+    const cut = APP.books.reduce((a, b) => a + (b.sheets || []).filter(s => s.truncated).length, 0);
+    if (cut) out.push({ id: 'big', scope: ['sheet', 'name', 'table', 'query', 'pivot', 'modeltable', 'measure'],
+        title: 'Слишком большие листы: ' + cut + ' — формулы в них не разбирались',
+        text: 'Лист такого размера REX пропускает целиком, чтобы не повесить браузер. Ссылки из его формул не учтены ни для одного объекта.' });
+    return out;
+}
+
+/** Оговорки, которые человек снял вручную, в расчёт не идут. */
+function activeCaveats(type) {
+    const off = APP.impactIgnore || new Set();
+    return impactCaveats().filter(c => !off.has(c.id) && (!type || c.scope.indexOf(type) !== -1));
+}
+
+/**
+ * Для каждого узла графа: кто перестанет получать данные, если его убрать.
+ * Связь «лежит на листе» влиянием не считается — иначе любая таблица «влияет»
+ * на свой лист. Зато для листа влияние считается вместе с его содержимым:
+ * удаляя лист, удаляешь и таблицы с именами, которые на нём живут.
+ */
+function computeImpact() {
+    const nodes = APP.graph.nodes.filter(n => !n.isParent);
+    const kids = new Map();   // лист → что на нём лежит
+    const outs = new Map();   // узел → кому он отдаёт данные
+    APP.graph.edges.forEach(e => {
+        if (e.type === 'contains') {
+            if (!kids.has(e.target)) kids.set(e.target, new Set());
+            kids.get(e.target).add(e.source);
+            return;
+        }
+        if (!outs.has(e.source)) outs.set(e.source, new Set());
+        outs.get(e.source).add(e.target);
+    });
+
+    const res = new Map();
+    nodes.forEach(n => {
+        const family = new Set([n.id]);
+        (kids.get(n.id) || []).forEach(k => family.add(k));
+        const affected = new Set();
+        family.forEach(id => (outs.get(id) || []).forEach(t => { if (!family.has(t)) affected.add(t); }));
+
+        const caveats = activeCaveats(n.type).slice();
+        // Скрытый лист — частый признак служебного, к которому обращаются из кода
+        if (n.type === 'sheet' && n.state && n.state !== 'visible') {
+            caveats.push({ id: 'hidden-sheet', title: 'Лист скрыт',
+                text: 'Скрытые листы обычно служебные: к ним чаще обращаются из макросов и формул с ДВССЫЛ, чем к обычным.' });
+        }
+        // Читает ли объект что-нибудь сам: конечный отчёт ни на что не влияет
+        // по построению, и путать его с мусором нельзя.
+        let consumes = false;
+        family.forEach(id => APP.graph.edges.forEach(e => {
+            if (e.type !== 'contains' && e.target === id && !family.has(e.source)) consumes = true;
+        }));
+        const ref = n.ref || {};
+        const computes = n.type === 'sheet' && (ref.formulaCount || 0) > 0;
+
+        const level = affected.size ? 'used'
+                    : (consumes || computes) ? 'output'
+                    : caveats.length ? 'maybe' : 'none';
+        res.set(n.id, { level, affected, family, caveats, consumes, computes });
+    });
+    return res;
+}
+
+/** Пересчитываем на каждую отрисовку: оговорки может снять человек. */
+function impactOf(id) {
+    if (!APP.impactCache) APP.impactCache = computeImpact();
+    return APP.impactCache.get(id) || { level: 'none', affected: new Set(), family: new Set(), caveats: [] };
+}
+
+function impactBadge(id) {
+    const im = impactOf(id);
+    const meta = IMPACT[im.level];
+    const names = Array.from(im.affected).slice(0, 6)
+        .map(x => (APP.graph.index.get(x) || {}).label || x);
+    const tip = im.level === 'used'
+        ? 'Данные отсюда читают: ' + names.join(', ') + (im.affected.size > 6 ? ' и ещё ' + (im.affected.size - 6) : '')
+        : im.level === 'output'
+        ? 'Из него никто не читает, но он ' + (im.computes ? 'сам считает по формулам' : 'сам берёт данные из книги') +
+          ' — похоже на конечный результат, а не на мусор'
+        : im.caveats.length
+        ? 'Ссылок не найдено, но: ' + im.caveats.map(c => c.title).join(' · ')
+        : 'Ни одной ссылки на этот объект в книге нет';
+    return '<span class="imp-badge" style="--imp:' + meta.color + '" title="' + esc(tip) + '">' +
+        meta.dot + ' ' + esc(im.level === 'used' ? 'влияет на ' + im.affected.size : meta.label) + '</span>';
+}
+
+
+/* ─────────────── ВЛИЯНИЕ: панель, фильтр, план очистки ─────────────── */
+
+/** Что вообще имеет смысл предлагать к удалению. Меры и таблицы модели сюда
+    не берём: их удаляют в Power Pivot, а не вычёркиванием из книги. */
+const IMPACT_TYPES = ['sheet', 'table', 'pivot', 'query', 'name'];
+
+function impactRows() {
+    return APP.graph.nodes
+        .filter(n => !n.isParent && IMPACT_TYPES.indexOf(n.type) !== -1)
+        // Скрытые имена — отдельная история со своей вкладкой, здесь они шум
+        .filter(n => !(n.type === 'name' && n.ref && n.ref.hidden))
+        .map(n => ({ node: n, imp: impactOf(n.id) }));
+}
+
+/** Объекты, которые показаны прямо на этой странице: листы и умные таблицы.
+    Счётчики считают их, а не всю книгу, — фильтр действует ровно на них. */
+function impactPageRows() {
+    return APP.graph.nodes
+        .filter(n => !n.isParent && (n.type === 'sheet' || n.type === 'table'))
+        .map(n => ({ node: n, imp: impactOf(n.id) }));
+}
+
+function renderImpactPanel() {
+    APP.impactCache = null;                 // оговорки мог снять человек
+    const rows = impactPageRows();
+    const cnt = { all: rows.length, none: 0, maybe: 0, output: 0, used: 0 };
+    rows.forEach(r => cnt[r.imp.level]++);
+
+    const cur = APP.impactFilter || 'all';
+    const btn = (id, dot, label, color) =>
+        '<button data-imp="' + id + '"' + (cur === id ? ' class="active"' : '') +
+        (color ? ' style="--imp:' + color + '"' : '') + '>' + (dot ? dot + ' ' : '') +
+        esc(label) + ' <span class="impf-num">' + fmtNum(cnt[id]) + '</span></button>';
+
+    $('#imp-filter').innerHTML =
+        btn('all', '', 'Все объекты') +
+        btn('none', IMPACT.none.dot, 'Ни на что не влияет', IMPACT.none.color) +
+        btn('maybe', IMPACT.maybe.dot, 'Скорее всего не влияет', IMPACT.maybe.color) +
+        btn('output', IMPACT.output.dot, 'Конечный результат', IMPACT.output.color) +
+        btn('used', IMPACT.used.dot, 'Влияет — не трогать', IMPACT.used.color);
+
+    const total = impactRows().length;
+    $('#imp-sub').textContent = 'листы и умные таблицы: из чего читают данные, а из чего — никто. ' +
+        'Синий — тоже «никто не читает», но это отчёт, а не мусор. ' +
+        'В плане очистки — все ' + fmtNum(total) + ' объектов книги, включая сводные, запросы и имена';
+
+    const cav = impactCaveats();
+    const off = APP.impactIgnore || new Set();
+    $('#imp-caveats').innerHTML = cav.length
+        ? '<div class="muted" style="font-size:11.5px;margin-bottom:3px">' +
+          'Пока эти оговорки в силе, «ни на что не влияет» честно недостижимо — максимум жёлтый. ' +
+          'Снимайте галку, только если проверили сами.</div>' +
+          cav.map(c => '<label class="imp-cav' + (off.has(c.id) ? ' off' : '') + '">' +
+              '<input type="checkbox" data-cav="' + c.id + '"' + (off.has(c.id) ? '' : ' checked') + '>' +
+              '<span><b>' + esc(c.title) + '</b><span class="cav-note">' + esc(c.text) + '</span></span></label>').join('')
+        : '<div class="imp-none">Оговорок нет: ни макросов, ни ДВССЫЛ, ни модели данных, ни внешних связей. ' +
+          'Значит «ни на что не влияет» здесь означает именно это.</div>';
+}
+
+/** План очистки: то же, что на экране, но по всем типам объектов и целиком. */
+function impactCSV() {
+    const L = ['тип;объект;лист;уровень;влияет на;кто читает;оговорки;формул;ошибок'];
+    impactRows().forEach(r => {
+        const n = r.node, im = r.imp;
+        const who = Array.from(im.affected).map(x => (APP.graph.index.get(x) || {}).label || x);
+        const sh = n.type === 'sheet' ? n.label : (n.sheet || '');
+        const ref = n.ref || {};
+        L.push([
+            (NODE_TYPES[n.type] || {}).label || n.type, n.label, sh,
+            IMPACT[im.level].label, im.affected.size, who.join(', '),
+            im.caveats.map(c => c.title).join(' | '),
+            n.type === 'sheet' ? (ref.formulaCount || 0) : '',
+            n.type === 'sheet' ? (ref.errorCount || 0) : '',
+        ].map(x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"').join(';'));
+    });
+    return '﻿' + L.join('\n');
+}
+
 /* ─────────────── ОЧИСТКА: отрисовка и конструктор ─────────────── */
 
 const CLEANUP_ROWS = 400;   // в таблице; полный список — в CSV
@@ -4694,7 +4957,11 @@ function cyElements() {
     const showOrphans = $('#opt-orphans').checked;
     const showInvisible = $('#opt-invisible').checked;
 
-    const typeOk = n => n.isParent || !APP.typeFilter || APP.typeFilter.has(n.type);
+    // «Только то, что ни на что не влияет»: на холсте остаются объекты, из
+    // которых никто не читает данные, — те самые острова, ради которых сюда идут
+    const deadOnly = $('#opt-dead').checked;
+    const typeOk = n => (n.isParent || !APP.typeFilter || APP.typeFilter.has(n.type)) &&
+        (!deadOnly || n.isParent || ['none', 'maybe'].indexOf(impactOf(n.id).level) !== -1);
     const allowed = new Set(APP.graph.nodes.filter(typeOk).map(n => n.id));
 
     const edges = APP.graph.edges.filter(e =>
@@ -5209,6 +5476,14 @@ function buildTypeFilter(reset) {
 
     const parts = [];
     if (hiddenCount) parts.push('скрыто ' + fmtNum(hiddenCount) + ' — включите чипом');
+    // Иначе резко опустевший холст читается как поломка, а не как фильтр
+    if ($('#opt-dead').checked) {
+        const all = APP.graph.nodes.filter(n => !n.isParent).length;
+        const dead = APP.graph.nodes.filter(n => !n.isParent &&
+            ['none', 'maybe'].indexOf(impactOf(n.id).level) !== -1).length;
+        parts.push('фильтр «ни на что не влияет»: ' + fmtNum(dead) + ' из ' + fmtNum(all) +
+                   ' — из остальных читают данные или это конечные отчёты');
+    }
     $('#type-hint').innerHTML = parts.join(' · ');
 
     const warn = $('#type-warn');
@@ -5478,6 +5753,25 @@ function initEvents() {
     };
     /* ── конструктор очистки: выбор групп сразу пересобирает макрос,
           иначе непонятно, что именно даёт галочка */
+    /* ── фильтр влияния: уровни и оговорки */
+    $('#imp-filter').addEventListener('click', e => {
+        const b = e.target.closest('button[data-imp]');
+        if (!b) return;
+        APP.impactFilter = b.dataset.imp;
+        renderSheets();
+    });
+    $('#imp-caveats').addEventListener('change', e => {
+        const cb = e.target.closest('input[data-cav]');
+        if (!cb) return;
+        APP.impactIgnore = APP.impactIgnore || new Set();
+        if (cb.checked) APP.impactIgnore.delete(cb.dataset.cav);
+        else APP.impactIgnore.add(cb.dataset.cav);
+        APP.impactCache = null;
+        renderSheets();
+        if (APP.graph.nodes.length) renderGraph();
+    });
+    $('#btn-imp-csv').onclick = () => download('REX_план_очистки.csv', impactCSV(), 'text/csv;charset=utf-8');
+
     $('#cleanup-groups').addEventListener('change', e => {
         const cb = e.target.closest('input[data-group]');
         if (!cb) return;
@@ -5552,7 +5846,7 @@ function initEvents() {
         currentLayout = b.dataset.layout;
         if (window.__cy) window.__cy.layout(LAYOUTS[currentLayout]).run();
     });
-    ['#opt-groups', '#opt-orphans', '#opt-invisible'].forEach(sel => { $(sel).onchange = renderGraph; });
+    ['#opt-groups', '#opt-orphans', '#opt-invisible', '#opt-dead'].forEach(sel => { $(sel).onchange = renderGraph; });
     $('#type-filter').addEventListener('click', e => {
         const chip = e.target.closest('.tchip');
         if (!chip) return;
