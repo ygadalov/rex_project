@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.2.3 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.2.4 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -514,6 +514,9 @@ tr.row-link { cursor: pointer; }
 .cl-note { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin-top: 3px; }
 .cl-num { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; }
 .cl-opts { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light); font-size: 12px; }
+/* Имя может быть на иврите или арабском: без изоляции браузер переставляет
+   куски строки местами, и «Справочники!מאזן_1» читается как испорченный текст. */
+.name-cell { unicode-bidi: isolate; }
 .cl-search { padding: 5px 9px; border: 1px solid var(--border); border-radius: 7px; font: inherit; font-size: 12px; min-width: 180px; background: var(--card); color: var(--text); }
 .cleanup-warn { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: #fef3c7; color: #92400e; font-size: 12px; line-height: 1.55; }
 
@@ -1234,7 +1237,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.2.3';
+const APP_VERSION = '1.2.4';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3561,7 +3564,7 @@ function renderSheets() {
     allNames.sort((a, b) => (b.broken - a.broken) || ((a.uses === 0) - (b.uses === 0)) * -1 || String(a.name).localeCompare(String(b.name), 'ru'));
     const namesShown = allNames.slice(0, NAMES_SHOWN);
     $('#names-tbody').innerHTML = namesShown.map(n =>
-        '<tr><td><strong>' + esc(n.name) + '</strong></td>' +
+        '<tr><td><strong class="name-cell" dir="ltr">' + esc(n.name) + '</strong></td>' +
         '<td>' + esc(n.scope) + '</td>' +
         '<td class="mono" style="font-size:11px;overflow-wrap:anywhere">' + esc(n.ref) + '</td>' +
         '<td class="num-cell">' + fmtNum(n.uses) + '</td>' +
@@ -4369,9 +4372,17 @@ function buildCleanupMacro(selectedIds, opts) {
     c('        "ШАГ 2: имена удалены. Нажмите Ctrl+Alt+F9 и проверьте отчёты.")');
     c('    ws.Range("A1").Font.Bold = True');
     c('    ws.Range("A2:E2").Value = Array("Имя", "Группа", "Ссылается на", "Действие", "Код группы")');
+    c('    ws.Range("G1").Value = "Имена на иврите, корейском и других письменностях - настоящие: их принесли чужие шаблоны. Это не ошибка кодировки."');
     c('    ws.Range("A2:E2").Font.Bold = True');
     c('    ws.Range("A3").Resize(rows, 5).Value = buf');
     c('    ws.Columns("A:E").AutoFit');
+    c("    ' В книге попадаются имена на иврите и других RTL-письменностях. Без явного");
+    c("    ' порядка чтения такая строка на экране перемешивается и выглядит как");
+    c("    ' испорченная кодировка, хотя символы верные.");
+    c('    On Error Resume Next');
+    c('    ws.Columns("A:E").ReadingOrder = xlLTR');
+    c('    Err.Clear');
+    c('    On Error GoTo 0');
     c('    ws.Rows(2).AutoFilter');
     c('End Sub');
     c('');
@@ -4522,7 +4533,7 @@ function renderCleanupTable() {
         : fmtNum(found.length) + (q ? ' найдено' : '');
 
     $('#cleanup-tbody').innerHTML = found.slice(0, CLEANUP_ROWS).map(r =>
-        '<tr><td><strong>' + esc(r.n.name) + '</strong></td>' +
+        '<tr><td><strong class="name-cell" dir="ltr">' + esc(r.n.name) + '</strong></td>' +
         '<td><span style="color:' + RISK[r.g.risk].color + ';font-weight:600">' +
             RISK[r.g.risk].dot + ' ' + esc(r.g.label) + '</span></td>' +
         '<td class="mono" style="font-size:11px;overflow-wrap:anywhere">' + esc(r.n.ref) + '</td>' +
