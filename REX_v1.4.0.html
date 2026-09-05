@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.3.7 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.4.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -514,6 +514,30 @@ tr.row-link { cursor: pointer; }
 .lg-focus-note { font-size: 10px; color: var(--text-muted); line-height: 1.45; padding: 2px 6px 0; font-weight: 500; }
 
 /* Влияние: бейдж уровня и фильтр по нему */
+/* Разбор по колонкам */
+.col-kinds { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 12px; }
+.col-kind {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+    font-size: 12px; font-weight: 600; color: var(--text-secondary);
+}
+.col-kind:hover { background: var(--border-light); }
+.col-kind.active { border-color: var(--ck); background: color-mix(in srgb, var(--ck) 10%, transparent); color: var(--text); }
+.col-kind .ck-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ck); }
+.col-kind .ck-num { font-family: 'JetBrains Mono', monospace; color: var(--text-muted); }
+.col-row { cursor: pointer; }
+.col-row:hover { background: var(--border-light); }
+.col-letter { font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+.col-pat { font-family: 'JetBrains Mono', monospace; font-size: 11px; overflow-wrap: anywhere; color: var(--text-secondary); }
+.col-share { font-size: 10.5px; color: var(--text-muted); }
+.col-gapcell { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--danger); }
+.col-detail td { background: var(--bg); }
+.col-plist { display: flex; flex-direction: column; gap: 5px; padding: 4px 0; }
+.col-pline { display: flex; gap: 9px; align-items: baseline; font-size: 11.5px; }
+.col-pline .cp-where { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--primary-dark); flex-shrink: 0; min-width: 108px; }
+.col-pline .cp-src { font-family: 'JetBrains Mono', monospace; color: var(--text-secondary); overflow-wrap: anywhere; }
+.col-empty { padding: 14px; border-radius: 8px; background: var(--bg); color: var(--text-muted); font-size: 12.5px; line-height: 1.6; }
+
 .imp-badge {
     display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
     font-size: 11px; font-weight: 700; color: var(--imp); cursor: help;
@@ -1143,8 +1167,31 @@ table.matrix td.cell[data-n] { cursor: default; }
 
 <!-- ═══════════ ФОРМУЛЫ ═══════════ -->
 <section class="page-content" id="page-formulas" role="tabpanel">
+    <!-- «Разбор по колонкам» идёт первым: это ответ на вопрос «как устроен
+         расчёт», ради которого на вкладку и заходят. -->
     <div class="header-top">
         <h1 class="page-title">Формулы и ссылки <span class="subtitle" id="formulas-sub"></span></h1>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Разбор по колонкам
+            <span class="hint">какая формула стоит в колонке и где её порвали</span>
+            <span style="flex:1"></span>
+            <select id="col-sheet" class="cl-search" aria-label="Лист для разбора"></select>
+            <button class="btn btn-sm btn-outline" id="btn-col-csv">CSV</button>
+        </div>
+        <div class="col-kinds" id="col-kinds"></div>
+        <div class="table-box" id="col-box">
+            <table class="wide" id="col-table">
+                <thead><tr>
+                    <th>Колонка</th><th>Заголовок</th><th>Строки</th>
+                    <th class="num-cell">Формул</th><th class="num-cell">Шаблонов</th>
+                    <th>Основной шаблон</th><th>Разрывы</th>
+                </tr></thead>
+                <tbody id="col-tbody"></tbody>
+            </table>
+        </div>
+        <div class="col-empty" id="col-empty" hidden></div>
     </div>
 
     <div class="card">
@@ -1319,7 +1366,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.3.7';
+const APP_VERSION = '1.4.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1333,6 +1380,8 @@ const APP = {
     showHiddenNames: false, // показывать ли скрытые имена — по умолчанию нет, их бывают тысячи
     cleanupGroups: null,    // разбор скрытых имён по происхождению
     cleanupPick: null,      // какие группы человек выбрал к удалению
+    colSheet: null,         // лист, по которому идёт разбор колонок
+    colKind: null,          // фильтр разбора: ровные / рваные / собранные руками
     sheetScope: null,       // выбранный лист: к нему сужаются таблицы и имена ниже
     impactFilter: null,     // уровень влияния, по которому фильтруется список листов
     impactIgnore: null,     // оговорки, снятые вручную
@@ -1735,7 +1784,37 @@ function mergeRefs(sheet, kind, fText) {
     return s.names.length + s.sheets.length + s.tables.length;
 }
 
-function scanSheetXml(xml, sheet) {
+/* ═══════════ РАЗБОР ПО КОЛОНКАМ ═══════════
+   Протянутая вниз колонка — это одна формула, повторённая N раз со сдвигом
+   строки. Чтобы это увидеть, ссылку с относительной строкой переводим в
+   смещение от своей строки: =B12*$D$5 в строке 12 и =B13*$D$5 в строке 13
+   дают один шаблон =B[+0]*$D$5. Дальше остаётся посчитать, сколько разных
+   шаблонов в колонке: один — колонка однородна, два и больше — её рвали.
+
+   Абсолютную строку ($D$5) не трогаем: она и должна быть одинаковой везде.
+   Границы слева и справа нужны, чтобы не искалечить LOG10 и ИНДЕКС1. */
+const RE_A1_REF = /(^|[^A-Za-z0-9_.])(\$?)([A-Z]{1,3})(\$?)(\d{1,7})(?![A-Za-z0-9_(])/g;
+
+function formulaPattern(f, row) {
+    return String(f).replace(RE_A1_REF, (m, pre, absCol, col, absRow, rowNum) => {
+        if (absRow) return m;                       // $5 — абсолютная, оставляем как есть
+        const d = parseInt(rowNum, 10) - row;
+        return pre + absCol + col + '[' + (d >= 0 ? '+' + d : d) + ']';
+    });
+}
+
+const COL_MAX_PATTERNS = 8;     // больше в таблице всё равно не показать
+const COL_HEADER_ROWS  = 60;    // шапку ниже этой строки уже не ищем
+const COL_MIN_FORMULAS = 3;     // две формулы — ещё не колонка
+
+/** Буква колонки по индексу: 0 → A, 27 → AB. */
+function colLetter(c) {
+    let s = '';
+    for (c = c + 1; c > 0; c = Math.floor((c - 1) / 26)) s = String.fromCharCode(65 + (c - 1) % 26) + s;
+    return s;
+}
+
+function scanSheetXml(xml, sheet, sst) {
     const dimM = /<dimension\s+ref="([^"]+)"/.exec(xml);
     let maxR = 0, maxC = 0;
     if (dimM) {
@@ -1781,6 +1860,7 @@ function scanSheetXml(xml, sheet) {
     let i = 0, formulas = 0, consts = 0, texts = 0, errors = 0, cells = 0;
     const errKinds = new Map();
     const colStats = new Map();
+    const colHeads = new Map();          // колонка → строка текста над формулами
     const refsOut  = new Map();          // имя листа → сколько ссылок
     const tableRefs = new Map();
     const nameRefs  = new Map();
@@ -1814,18 +1894,25 @@ function scanSheetXml(xml, sheet) {
 
         // ── формула
         let fText = null;
+        // Общая формула хранится один раз, у ячейки-владельца. Смещения строк
+        // в её тексте считаются от ЕЁ строки — иначе шаблон поедет.
+        let patRow = pos ? pos.r : 0;
         const fi = inner.indexOf('<f');
         if (fi !== -1) {
             const fgt = inner.indexOf('>', fi);
             const fAttrs = inner.slice(fi + 2, fgt);
             if (inner[fgt - 1] === '/') {
                 const si = /si="(\d+)"/.exec(fAttrs);              // продолжение общей формулы
-                if (si) fText = shared.get(si[1]) || '';
+                if (si) {
+                    const own = shared.get(si[1]);
+                    if (own) { fText = own.text; patRow = own.row; }
+                    else fText = '';
+                }
             } else {
                 const fend = inner.indexOf('</f>', fgt);
                 fText = unesc(inner.slice(fgt + 1, fend === -1 ? undefined : fend));
                 const si = /si="(\d+)"/.exec(fAttrs);
-                if (si && /t="shared"/.test(fAttrs)) shared.set(si[1], fText);
+                if (si && /t="shared"/.test(fAttrs)) shared.set(si[1], { text: fText, row: pos ? pos.r : 0 });
                 if (/t="array"/.test(fAttrs)) sheet.hasArray = true;
             }
         }
@@ -1865,16 +1952,34 @@ function scanSheetXml(xml, sheet) {
             else { consts++; kind = 2; }
         } else if (fText == null && inner.indexOf('<is>') !== -1) { texts++; kind = 1; }
 
+        // Заголовок колонки ищем среди текстовых ячеек в шапке листа
+        if (kind === 1 && pos && pos.r < COL_HEADER_ROWS && sst && vi !== -1 && type === 's') {
+            const idx = +unesc(inner.slice(vi + 3, inner.indexOf('</v>', vi)));
+            const t = sst[idx];
+            if (t) colHeads.set(pos.c, { row: pos.r, text: t });
+        }
+
         if (pos) {
             putHeat(pos.r, pos.c, kind);
             // Колоночная статистика — для правила «разрыв в формульной колонке»
             if (kind >= 2) {
                 let cs = colStats.get(pos.c);
-                if (!cs) { cs = { f: 0, k: 0, minF: Infinity, maxF: -1, constRows: [] }; colStats.set(pos.c, cs); }
+                if (!cs) { cs = { f: 0, k: 0, minF: Infinity, maxF: -1, constRows: [], pat: new Map(), patOver: 0 }; colStats.set(pos.c, cs); }
                 if (kind === 3 || kind === 4) {
                     cs.f++;
                     if (pos.r < cs.minF) cs.minF = pos.r;
                     if (pos.r > cs.maxF) cs.maxF = pos.r;
+                    // Шаблон формулы: по нему видно, протягивали колонку или собирали руками
+                    if (fText) {
+                        const key = formulaPattern(fText, patRow).slice(0, 300);
+                        const rec = cs.pat.get(key);
+                        if (rec) { rec.n++; rec.last = pos.r; }
+                        else if (cs.pat.size < COL_MAX_PATTERNS)
+                            cs.pat.set(key, { n: 1, first: pos.r, last: pos.r, sample: String(fText).slice(0, 300) });
+                        // Считаем не «сколько ещё шаблонов» (их не запомнить, не храня все),
+                        // а сколько формул не легло ни в один из сохранённых.
+                        else cs.patOver++;
+                    }
                 } else if (kind === 2) {
                     cs.k++;
                     if (cs.constRows.length < 14) cs.constRows.push(pos.r);
@@ -1889,8 +1994,44 @@ function scanSheetXml(xml, sheet) {
         errorCount: errors, errKinds, colStats, refsOut, tableRefs, nameRefs, extRefs, funcs,
         useKinds, invisible, wholeCol, errorCells, longest: longest.slice(0, 20),
         rows: maxR, cols: maxC, heat: { w: hw, h: hh, data: heat },
+        columns: buildColumns(colStats, colHeads),
     });
     applyNonCellFormulas(xml, sheet);
+}
+
+/**
+ * Сводка по колонкам: что за формула, сколько раз повторена, где её порвали.
+ * Три исхода, ради которых всё и затевалось:
+ *   ровная    — один шаблон на весь диапазон, колонку протянули и не трогали;
+ *   рваная    — шаблонов больше одного или внутри диапазона стоят константы;
+ *   ручная    — шаблонов почти столько же, сколько формул: протягивания не было.
+ */
+function buildColumns(colStats, colHeads) {
+    const out = [];
+    colStats.forEach((cs, c) => {
+        if (cs.f < COL_MIN_FORMULAS) return;
+        const pats = Array.from(cs.pat.entries())
+            .map(([key, v]) => ({ pattern: key, n: v.n, first: v.first, last: v.last, sample: v.sample }))
+            .sort((a, b) => b.n - a.n);
+        // Константы считаем разрывами только внутри диапазона формул: то, что
+        // стоит выше или ниже, — это шапка и итоги, а не подмена формулы.
+        const gaps = (cs.constRows || []).filter(r => r > cs.minF && r < cs.maxF);
+        const distinct = cs.pat.size;
+        const over = cs.patOver;                     // формулы сверх сохранённых шаблонов
+        const top = pats[0] ? pats[0].n / cs.f : 0;
+        // «Ручная сборка» — когда шаблонов почти столько же, сколько формул:
+        // протягивания не было вовсе. Для коротких колонок такой вывод
+        // недостоверен, поэтому от пяти формул и выше.
+        const kind = distinct <= 1 && !over && !gaps.length ? 'even'
+                   : (cs.f >= 5 && (over > cs.f * 0.3 || distinct >= cs.f * 0.8)) ? 'manual'
+                   : 'torn';
+        out.push({
+            col: c, letter: colLetter(c), header: (colHeads.get(c) || {}).text || '',
+            formulas: cs.f, consts: cs.k, gaps, distinct, over, patterns: pats,
+            share: top, from: cs.minF, to: cs.maxF, kind,
+        });
+    });
+    return out.sort((a, b) => a.col - b.col);
 }
 
 /** Разбирает правила листа и добавляет их ссылки к ссылкам из ячеек. */
@@ -2083,12 +2224,26 @@ async function parseOOXML(bytes, book, log) {
         });
     });
 
+    /* ── общие строки: единственное, ради чего они нужны, — заголовки колонок
+          в разборе формул. Тексты режем: для шапки хватает шестидесяти знаков. */
+    let sst = null;
+    const sstRaw = txt('xl/sharedStrings.xml');
+    if (sstRaw) {
+        sst = [];
+        const re = /<si>([\s\S]*?)<\/si>/g;
+        let m;
+        while ((m = re.exec(sstRaw)) !== null) {
+            const parts = m[1].match(/<t[^>]*>([\s\S]*?)<\/t>/g) || [];
+            sst.push(unesc(parts.map(t => t.replace(/<[^>]+>/g, '')).join('')).trim().slice(0, 60));
+        }
+    }
+
     /* ── листы: самая долгая часть, поэтому с прогрессом */
     for (let k = 0; k < book.sheets.length; k++) {
         const sh = book.sheets[k];
         const xml = sh.path ? txt(sh.path) : null;
         if (!xml) { Object.assign(sh, { cellCount: 0, formulaCount: 0, constCount: 0, textCount: 0, errorCount: 0 }); continue; }
-        scanSheetXml(xml, sh);
+        scanSheetXml(xml, sh, sst);
 
         // rels листа → какие таблицы и запросы на нём лежат
         if (sh.path) {
@@ -2936,7 +3091,7 @@ const FIX_HINTS = {
     'names-broken': 'Откройте <b>Диспетчер имён (Ctrl+F3)</b>, отсортируйте по столбцу «Диапазон» и удалите записи с #REF! — либо переназначьте на действующий диапазон. Перед удалением сверьтесь с колонкой «Использований» на вкладке «Листы и таблицы».',
     'calc-manual': '<b>Формулы → Параметры вычислений → Автоматически</b>, затем <b>F9</b> и сохраните. Если ручной режим стоит намеренно из-за скорости — напишите об этом прямо на первом листе, иначе следующий человек примет устаревшие числа за актуальные.',
     'ext-local': 'Перенесите файлы-источники на общий сетевой ресурс или SharePoint и переподключите: <b>Данные → Изменить связи → Изменить</b>. Надёжнее — втянуть данные внутрь книги через Power Query, тогда путь останется только в одном месте (в параметре запроса).',
-    'col-gap': 'Сравните вбитое значение с формулой соседних строк. Если правка обоснована — вынесите её в отдельную колонку «корректировка», а формулу восстановите: тогда исключение будет видно, переживёт протягивание и не потеряется при пересчёте.',
+    'col-gap': 'Откройте <b>«Формулы и ссылки» → «Разбор по колонкам»</b>: там видно, какой шаблон стоит в колонке и в каких именно ячейках его подменили. Сравните вбитое значение с формулой соседних строк. Если правка обоснована — вынесите её в отдельную колонку «корректировка», а формулу восстановите: тогда исключение будет видно, переживёт протягивание и не потеряется при пересчёте.',
     'invisible-links': 'Замените <span class="mono">ДВССЫЛ/INDIRECT</span> и <span class="mono">СМЕЩ/OFFSET</span> на прямые ссылки, <span class="mono">ИНДЕКС</span> или структурированные ссылки умных таблиц. Если динамика действительно нужна — оставьте, но задокументируйте: при переименовании листа такая формула ломается молча, и ни граф, ни сам Excel этого не покажут.',
     'volatile': '<span class="mono">ТДАТА/СЕГОДНЯ</span> вынесите в одну служебную ячейку и ссылайтесь на неё. <span class="mono">СМЕЩ</span> замените на <span class="mono">ИНДЕКС</span>. Если книга всё равно тормозит — на время правок переключите пересчёт в ручной режим (не забыв вернуть обратно).',
     'whole-col': 'Замените <span class="mono">A:A</span> на умную таблицу (<b>Ctrl+T</b>) или на явный диапазон. Формулы по таблице расширяются сами и не перебирают миллион пустых строк.',
@@ -3420,6 +3575,7 @@ function renderAll() {
     renderOverview();
     renderSheets();
     renderFormulas();
+    renderColumns();
     renderPQ();
     renderModel();
     renderQuality();
@@ -3710,6 +3866,8 @@ function showSheetDetail(bookIdx, name) {
     APP.activeSheet = sh;
 
     APP.sheetScope = { bookIdx, name };
+    APP.colSheet = bookIdx + '|' + name;   // разбор колонок открывается на том же листе
+    APP.colKind = 'all';
     $('#sheet-detail-card').hidden = false;
     $('#sheet-detail-title').textContent = 'Лист «' + name + '»';
 
@@ -3759,6 +3917,11 @@ function showSheetDetail(bookIdx, name) {
         '<strong>ошибок:</strong> ' + fmtNum(sh.errorCount) + '<br>' +
         (((node || {}).hosted || []).length
             ? '<strong>На листе лежит:</strong> ' + esc(node.hosted.map(nm).join(', ')) + '<br>' : '') +
+        (((sh.columns || []).length)
+            ? '<strong>Колонок с формулами:</strong> ' + fmtNum(sh.columns.length) +
+              ' &nbsp;·&nbsp; <strong>из них с разрывами:</strong> ' +
+              fmtNum(sh.columns.filter(c => c.kind !== 'even').length) +
+              ' <span class="muted">(разбор — на вкладке «Формулы и ссылки»)</span><br>' : '') +
         '<strong>Объединённых ячеек:</strong> ' + fmtNum(sh.merged || 0) +
         ' &nbsp;·&nbsp; <strong>условное форматирование:</strong> ' + fmtNum(sh.condFmt || 0) +
         ' &nbsp;·&nbsp; <strong>проверка данных:</strong> ' + fmtNum(sh.dataValid || 0) + '<br><br>' +
@@ -3768,6 +3931,7 @@ function showSheetDetail(bookIdx, name) {
 
     // Списки ниже сужаются под выбранный лист — перерисовываем их здесь же
     renderSheets();
+    renderColumns();
     $('#sheet-detail-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -4729,6 +4893,125 @@ function impactBadge(id) {
         meta.dot + ' ' + esc(im.level === 'used' ? 'влияет на ' + im.affected.size : meta.label) + '</span>';
 }
 
+
+
+/* ─────────────── РАЗБОР ПО КОЛОНКАМ ─────────────── */
+
+const COL_KINDS = {
+    even:   { label: 'ровные',            color: '#16a34a',
+              note: 'один шаблон на весь диапазон: колонку протянули и больше не трогали' },
+    torn:   { label: 'рваные',            color: '#d97706',
+              note: 'шаблонов больше одного или внутри диапазона стоят константы — колонку правили точечно' },
+    manual: { label: 'собраны руками',    color: '#dc2626',
+              note: 'почти каждая ячейка со своей формулой: протягивания не было' },
+};
+
+const COL_ROWS_SHOWN = 300;
+
+/** Лист, по которому идёт разбор: выбранный в списке или первый подходящий. */
+function colSheet() {
+    const all = [];
+    APP.books.forEach((b, bi) => (b.sheets || []).forEach(sh => all.push({ bi, sh })));
+    const key = APP.colSheet;
+    const found = all.find(x => x.bi + '|' + x.sh.name === key);
+    if (found) return found;
+    const richest = all.filter(x => (x.sh.columns || []).length)
+        .sort((a, b) => b.sh.columns.length - a.sh.columns.length)[0];
+    return richest || all[0] || null;
+}
+
+function renderColumns() {
+    const all = [];
+    APP.books.forEach((b, bi) => (b.sheets || []).forEach(sh => all.push({ bi, sh })));
+    const sel = $('#col-sheet');
+    const cur = colSheet();
+    sel.innerHTML = all.map(x => {
+        const n = (x.sh.columns || []).length;
+        return '<option value="' + esc(x.bi + '|' + x.sh.name) + '"' +
+            (cur && cur.sh === x.sh ? ' selected' : '') + '>' + esc(x.sh.name) +
+            (n ? ' — колонок ' + n : x.sh.truncated ? ' — лист слишком велик' : ' — формул нет') + '</option>';
+    }).join('');
+
+    const sh = cur ? cur.sh : null;
+    const cols = (sh && sh.columns) || [];
+    const empty = $('#col-empty');
+    $('#col-box').hidden = !cols.length;
+    empty.hidden = !!cols.length;
+    if (!cols.length) {
+        empty.textContent = !sh ? 'Книга не загружена.'
+            : sh.truncated
+                ? 'Лист «' + sh.name + '» слишком велик, и его ячейки REX не разбирал — иначе браузер повиснет. ' +
+                  'Разбора по колонкам для него нет, и это честнее, чем показать пустую таблицу.'
+                : 'На листе «' + sh.name + '» нет колонок хотя бы с ' + COL_MIN_FORMULAS +
+                  ' формулами — разбирать нечего.';
+        $('#col-kinds').innerHTML = '';
+        $('#col-tbody').innerHTML = '';
+        return;
+    }
+
+    const cnt = { all: cols.length, even: 0, torn: 0, manual: 0 };
+    cols.forEach(c => cnt[c.kind]++);
+    const pick = APP.colKind || 'all';
+    $('#col-kinds').innerHTML =
+        '<button class="col-kind' + (pick === 'all' ? ' active' : '') + '" data-kind="all" style="--ck:var(--primary)">' +
+        'Все колонки <span class="ck-num">' + cnt.all + '</span></button>' +
+        Object.entries(COL_KINDS).map(([k, v]) =>
+            '<button class="col-kind' + (pick === k ? ' active' : '') + '" data-kind="' + k + '"' +
+            ' style="--ck:' + v.color + '" title="' + esc(v.note) + '">' +
+            '<span class="ck-dot"></span>' + v.label + ' <span class="ck-num">' + cnt[k] + '</span></button>').join('');
+
+    // Подозрительные наверх: ради них сюда и приходят
+    const order = { manual: 0, torn: 1, even: 2 };
+    const shown = cols.filter(c => pick === 'all' || c.kind === pick)
+        .sort((a, b) => (order[a.kind] - order[b.kind]) || (b.formulas - a.formulas) || (a.col - b.col))
+        .slice(0, COL_ROWS_SHOWN);
+
+    $('#col-tbody').innerHTML = shown.map(c => {
+        const top = c.patterns[0] || {};
+        const meta = COL_KINDS[c.kind];
+        return '<tr class="col-row" data-col="' + c.col + '">' +
+            '<td><span class="col-letter" style="color:' + meta.color + '">' + c.letter + '</span></td>' +
+            '<td>' + (c.header ? esc(c.header) : '<span class="muted">—</span>') + '</td>' +
+            '<td class="mono" style="font-size:11px">' + (c.from + 1) + '–' + (c.to + 1) + '</td>' +
+            '<td class="num-cell">' + fmtNum(c.formulas) + '</td>' +
+            '<td class="num-cell">' + fmtNum(c.distinct) + (c.over ? '+' : '') + '</td>' +
+            '<td><span class="col-pat">' + esc(String(top.sample || '').slice(0, 70)) +
+                (String(top.sample || '').length > 70 ? '…' : '') + '</span>' +
+                '<br><span class="col-share">' + Math.round(c.share * 100) + '% ячеек колонки</span></td>' +
+            '<td class="col-gapcell">' + (c.gaps.length
+                ? c.gaps.slice(0, 4).map(r => c.letter + (r + 1)).join(', ') + (c.gaps.length > 4 ? ' и ещё ' + (c.gaps.length - 4) : '')
+                : '<span class="muted">—</span>') + '</td></tr>';
+    }).join('') + (cols.filter(c => pick === 'all' || c.kind === pick).length > COL_ROWS_SHOWN
+        ? '<tr><td colspan="7" class="muted" style="text-align:center;padding:10px">показаны первые ' +
+          COL_ROWS_SHOWN + ' — полный список в CSV</td></tr>' : '');
+}
+
+/** Развёрнутая строка: все шаблоны колонки с адресами. */
+function colDetailRow(c) {
+    const lines = c.patterns.map(p =>
+        '<div class="col-pline"><span class="cp-where">' + c.letter + (p.first + 1) +
+        (p.last !== p.first ? '–' + c.letter + (p.last + 1) : '') + ' ×' + fmtNum(p.n) + '</span>' +
+        '<span class="cp-src">' + esc(p.sample) + '</span></div>').join('');
+    const tail = c.over
+        ? '<div class="col-pline"><span class="cp-where">ещё ' + fmtNum(c.over) + '</span>' +
+          '<span class="cp-src muted">формул не совпали ни с одним из показанных шаблонов</span></div>' : '';
+    const gaps = c.gaps.length
+        ? '<div class="col-pline"><span class="cp-where">константы</span><span class="cp-src">' +
+          c.gaps.map(r => c.letter + (r + 1)).join(', ') +
+          ' — значения вбиты руками посреди формул</span></div>' : '';
+    return '<tr class="col-detail"><td colspan="7"><div class="col-plist">' + lines + tail + gaps + '</div></td></tr>';
+}
+
+function columnsCSV() {
+    const cur = colSheet();
+    const L = ['лист;колонка;заголовок;строки;формул;шаблонов;доля основного;разрывы;основной шаблон'];
+    (((cur || {}).sh || {}).columns || []).forEach(c => L.push([
+        cur.sh.name, c.letter, c.header, (c.from + 1) + '-' + (c.to + 1), c.formulas,
+        c.distinct + (c.over ? '+' : ''), Math.round(c.share * 100) + '%',
+        c.gaps.map(r => c.letter + (r + 1)).join(' '), (c.patterns[0] || {}).sample || '',
+    ].map(x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"').join(';')));
+    return '﻿' + L.join('\n');
+}
 
 /* ─────────────── ВЛИЯНИЕ: панель, фильтр, план очистки ─────────────── */
 
@@ -5976,6 +6259,26 @@ function initEvents() {
     /* ── конструктор очистки: выбор групп сразу пересобирает макрос,
           иначе непонятно, что именно даёт галочка */
     /* ── фильтр влияния: уровни и оговорки */
+    /* ── разбор по колонкам */
+    $('#col-sheet').onchange = e => { APP.colSheet = e.target.value; APP.colKind = 'all'; renderColumns(); };
+    $('#col-kinds').addEventListener('click', e => {
+        const b = e.target.closest('.col-kind');
+        if (!b) return;
+        APP.colKind = b.dataset.kind;
+        renderColumns();
+    });
+    $('#col-tbody').addEventListener('click', e => {
+        const row = e.target.closest('.col-row');
+        if (!row) return;
+        const next = row.nextElementSibling;
+        if (next && next.classList.contains('col-detail')) { next.remove(); return; }
+        $$('.col-detail').forEach(x => x.remove());
+        const cur = colSheet();
+        const c = ((cur || {}).sh.columns || []).find(x => x.col === +row.dataset.col);
+        if (c) row.insertAdjacentHTML('afterend', colDetailRow(c));
+    });
+    $('#btn-col-csv').onclick = () => download('REX_разбор_колонок.csv', columnsCSV(), 'text/csv;charset=utf-8');
+
     $('#sheet-scope-clear').onclick = () => {
         APP.sheetScope = null;
         APP.activeSheet = null;
