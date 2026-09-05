@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.4.4 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.4.5 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1383,7 +1383,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.4.4';
+const APP_VERSION = '1.4.5';
 
 const APP = {
     books: [],          // разобранные книги
@@ -2850,10 +2850,12 @@ const NODE_TYPES = {
     query:   { label: 'Запрос Power Query', short: 'Запрос',   color: '#7c3aed', shape: 'round-rectangle' },
     table:   { label: 'Умная таблица',      short: 'Таблица',  color: '#059669', shape: 'rectangle' },
     sheet:   { label: 'Лист',               short: 'Лист',     color: '#2563eb', shape: 'round-rectangle' },
-    // Охра. Оранжевый сливался с красной рамкой «имя сломано», оливковый рядом
-    // с ней читался грязно. Жёлтый край спектра даёт красному контраст и по
-    // тону, и по светлоте — рамка видна, а сам узел не спорит с ней цветом.
-    name:    { label: 'Именованный диапазон', short: 'Имя',    color: '#ca8a04', shape: 'tag' },
+    // Жёлтый. Оранжевый сливался с красной рамкой «имя сломано», оливковый и
+    // охра рядом с ней выглядели грязно. Чистый жёлтый максимально далёк от
+    // красного по светлоте — рамка читается как отдельный сигнал, а не как
+    // продолжение заливки. Расплата: силуэт 14×12 px в легенде бледнее, чем
+    // у остальных типов, поэтому текст подписей рисуется своим цветом.
+    name:    { label: 'Именованный диапазон', short: 'Имя',    color: '#eab308', shape: 'tag' },
     pivot:   { label: 'Сводная таблица',    short: 'Сводная',  color: '#db2777', shape: 'diamond' },
     modeltable: { label: 'Таблица модели',  short: 'Табл. модели', color: '#0891b2', shape: 'octagon' },
     measure: { label: 'Мера модели',        short: 'Мера',     color: '#4f46e5', shape: 'hexagon' },
