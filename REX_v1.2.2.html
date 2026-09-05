@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.2.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.2.2 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1233,7 +1233,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3940,6 +3940,10 @@ const RISK = {
    Поле vba — та же проверка на языке макроса, чтобы UI и сгенерированный
    код не могли разойтись в трактовке. */
 const NAME_GROUPS = [
+    { id: 'builtin', risk: 'danger', label: 'Служебные имена Excel (автофильтр, область печати)',
+      note: 'Excel ведёт их сам: _FilterDatabase держит автофильтр листа, Print_Area — область печати. Удаление такого имени делает книгу «повреждённой»: при открытии Excel предлагает её восстановить и выбрасывает автофильтр. В файле у них префикс _xlnm., но в макросах Excel отдаёт их БЕЗ префикса — на этом и споткнулась первая версия макроса.',
+      test: n => n.isBuiltin, vba: null },
+
     { id: 'used', risk: 'danger', label: 'Используются в книге',
       note: 'REX нашёл ссылки на это имя — в формулах, условном форматировании, проверке данных или рядах диаграмм. Удалять нельзя.',
       test: n => n.uses > 0, vba: null },
@@ -3995,7 +3999,11 @@ const bareName = x => { const i = String(x).lastIndexOf('!'); return i >= 0 ? St
     время на выяснение, настоящее оно или нет, дороже, чем оставить лишнее.
     Ровно это же условие уходит в макрос — иначе интерфейс обещал бы удалить
     то, что макрос молча оставляет. */
-const looksBuiltin = bare => bare.indexOf('_xlfn.') !== -1 || bare.indexOf('_xlnm.') !== -1;
+const looksBuiltin = bare => {
+    const s = String(bare).toLowerCase();
+    return s.indexOf('_xlfn.') !== -1 || s.indexOf('_xlnm.') !== -1 ||
+           (s.slice(0, 3) === '_xl' && s.slice(0, 8) !== '_xlchart');
+};
 
 /** Разбирает имена-кандидаты на очистку по группам. Возвращает [{group, names[]}].
     Видимые имена сюда попадают только сломанными: остальные человек видит в
@@ -4003,9 +4011,12 @@ const looksBuiltin = bare => bare.indexOf('_xlfn.') !== -1 || bare.indexOf('_xln
 function classifyNames() {
     const rows = [];
     APP.books.forEach((b, bi) => (b.names || []).forEach(n => {
-        if (n.builtin || looksBuiltin(bareName(n.name))) return;
-        if (!n.hidden && !n.broken) return;
-        rows.push({ book: bi, name: n.name, bare: bareName(n.name), scope: n.scope, hidden: n.hidden,
+        const bare = bareName(n.name);
+        const isBuiltin = n.builtin || looksBuiltin(bare);
+        // Встроенные показываем отдельной запертой строкой, а не прячем: иначе
+        // непонятно, почему макрос оставляет имена, которых нет в списке.
+        if (!isBuiltin && !n.hidden && !n.broken) return;
+        rows.push({ book: bi, name: n.name, bare, scope: n.scope, hidden: n.hidden, isBuiltin,
                     ref: n.ref, broken: n.broken, uses: n.uses || 0, usedIn: n.usedIn || null });
     }));
     const by = new Map();
@@ -4115,7 +4126,7 @@ function buildCleanupMacro(selectedIds, opts) {
     c('Public Sub REX_CleanNames()');
     c('    Dim i As Long, nm As String, refTo As String, grp As String, kill As Boolean');
     c('    Dim deleted As Long, kept As Long, failed As Long, total As Long');
-    c('    Dim buf() As String, rows As Long, t As Single');
+    c('    Dim buf() As String, rows As Long, t As Single, restored As Long');
     c('');
     c('    FillProtected');
     c('    t = Timer');
@@ -4173,6 +4184,7 @@ function buildCleanupMacro(selectedIds, opts) {
     c('        If i Mod 500 = 0 Then Application.StatusBar = "REX: осталось проверить " & i & " имён..."');
     c('    Next i');
     c('');
+    c('    restored = RestoreFilterNames()');
     c('    WriteReport buf, rows');
     c('');
     c('    Application.StatusBar = False');
@@ -4191,7 +4203,8 @@ function buildCleanupMacro(selectedIds, opts) {
     c('    Else');
     c('        MsgBox "Удалено: " & deleted & vbCrLf & _');
     c('               "Оставлено: " & kept & vbCrLf & _');
-    c('               "Не удалилось: " & failed & vbCrLf & vbCrLf & _');
+    c('               "Не удалилось: " & failed & vbCrLf & _');
+    c('               IIf(restored > 0, "Восстановлено служебных имён автофильтра: " & restored & vbCrLf, "") & vbCrLf & _');
     c('               "Подробности - на листе «REX_очистка»." & vbCrLf & _');
     c('               "Теперь нажмите Ctrl+Alt+F9 и проверьте отчёты." & vbCrLf & _');
     c('               "Заняло " & Format$(Timer - t, "0.0") & " с.", vbInformation, "REX - готово"');
@@ -4210,9 +4223,7 @@ function buildCleanupMacro(selectedIds, opts) {
     c('    On Error GoTo 0');
     c('    bare = BareName(n.Name)');
     c('');
-    c('    If InStr(1, bare, "_xlnm.") > 0 Or InStr(1, bare, "_xlfn.") > 0 Then');
-    c('        GroupOf = "builtin": Exit Function');
-    c('    End If');
+    c('    If IsBuiltInName(bare) Then GroupOf = "builtin": Exit Function');
     c('    If PROTECTED_NAMES.Exists(bare) Then GroupOf = "used": Exit Function');
     c('    If isVisible Then');
     c('        GroupOf = IIf(InStr(1, refTo, "#REF!") > 0, "visible_broken", "visible")');
@@ -4229,6 +4240,51 @@ function buildCleanupMacro(selectedIds, opts) {
     c('        Case "builtin": GroupTitle = "встроенное имя Excel (область печати, фильтр)"');
     c('        Case Else:      GroupTitle = g');
     c('    End Select');
+    c('End Function');
+    c('');
+    c("' Встроенные имена Excel. В самом файле они лежат с префиксом «_xlnm.», но");
+    c("' объектная модель отдаёт их БЕЗ префикса: Names(\"_FilterDatabase\"), а не");
+    c("' Names(\"_xlnm._FilterDatabase\"). Проверка по префиксу здесь не работает -");
+    c("' нужен список. Удалить _FilterDatabase у листа с автофильтром = получить");
+    c("' «книга повреждена» при следующем открытии.");
+    c('Private Function IsBuiltInName(ByVal bare As String) As Boolean');
+    c('    Dim s As String');
+    c('    s = LCase$(bare)');
+    c('    If InStr(1, s, "_xlfn.") > 0 Or InStr(1, s, "_xlnm.") > 0 Then');
+    c('        IsBuiltInName = True: Exit Function');
+    c('    End If');
+    c("    ' _xlchart сюда не относим: у него своя группа, а если имя реально держит");
+    c("    ' ряд диаграммы, оно должно попасть в защиту как используемое.");
+    c('    If Left$(s, 3) = "_xl" And Left$(s, 8) <> "_xlchart" Then');
+    c('        IsBuiltInName = True: Exit Function');
+    c('    End If');
+    c('    Select Case s');
+    c('        Case "_filterdatabase", "filterdatabase", "print_area", "print_titles", _');
+    c('             "criteria", "extract", "database", "consolidate_area", "sheet_title", _');
+    c('             "auto_open", "auto_close", "auto_activate", "auto_deactivate"');
+    c('            IsBuiltInName = True');
+    c('    End Select');
+    c('End Function');
+    c('');
+    c("' Страховка от той самой поломки: если у листа остался автофильтр, а его");
+    c("' служебное имя пропало, Excel сочтёт книгу повреждённой. Восстанавливаем.");
+    c('Private Function RestoreFilterNames() As Long');
+    c('    Dim ws As Worksheet, ok As Boolean, n As Long');
+    c('    For Each ws In ThisWorkbook.Worksheets');
+    c('        If ws.AutoFilterMode Then');
+    c('            ok = False');
+    c('            On Error Resume Next');
+    c('            ok = (Len(ws.Names("_FilterDatabase").Name) > 0)');
+    c('            Err.Clear');
+    c('            If Not ok Then');
+    c('                ws.Names.Add Name:="_FilterDatabase", RefersTo:=ws.AutoFilter.Range, Visible:=False');
+    c('                If Err.Number = 0 Then n = n + 1');
+    c('                Err.Clear');
+    c('            End If');
+    c('            On Error GoTo 0');
+    c('        End If');
+    c('    Next ws');
+    c('    RestoreFilterNames = n');
     c('End Function');
     c('');
     c("' «Лист1!Имя» -> «Имя»");
@@ -4316,6 +4372,8 @@ function renderCleanup() {
     if (!APP.cleanupPick) {
         APP.cleanupPick = groups.filter(g => g.group.risk === 'safe').map(g => g.group.id);
     }
+    // Запертые группы не могут оказаться в выборе даже через старое состояние
+    APP.cleanupPick = APP.cleanupPick.filter(id => id !== 'used' && id !== 'builtin');
 
     const total = groups.reduce((a, g) => a + g.names.length, 0);
     $('#cleanup-empty').hidden = total > 0;
@@ -4327,7 +4385,7 @@ function renderCleanup() {
     $('#cleanup-groups').innerHTML = groups.map(g => {
         const r = RISK[g.group.risk];
         const on = APP.cleanupPick.indexOf(g.group.id) !== -1;
-        const locked = g.group.id === 'used';
+        const locked = g.group.id === 'used' || g.group.id === 'builtin';
         return '<label class="cl-group' + (locked ? ' is-locked' : '') + '" style="--risk-color:' + r.color + '">' +
             '<input type="checkbox" data-group="' + g.group.id + '"' +
                 (on ? ' checked' : '') + (locked ? ' disabled' : '') + '>' +
