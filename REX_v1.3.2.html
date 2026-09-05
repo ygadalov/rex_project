@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.3.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.3.2 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -446,6 +446,13 @@ tr.row-link { cursor: pointer; }
     transition: transform .2s;
 }
 .graph-legend .lg-toggle:hover { color: var(--text); background: var(--border-light); }
+/* Скрыть тип связи кликом можно было всегда, вернуть все разом — нет */
+.graph-legend .lg-reset {
+    position: absolute; top: 5px; right: 26px; background: none; border: none; cursor: pointer;
+    color: var(--primary); font-size: 12px; font-weight: 700; line-height: 1; padding: 3px 5px; border-radius: 4px;
+}
+.graph-legend .lg-reset:hover { background: var(--border-light); color: var(--primary-dark); }
+.graph-legend .lg-title { padding-right: 42px; }
 .graph-legend.collapsed .lg-scroll { display: none; }
 .graph-legend.collapsed .lg-toggle { transform: rotate(180deg); }
 .lg-scroll { max-height: min(46vh, 420px); overflow-y: auto; margin-top: 4px; }
@@ -551,13 +558,18 @@ tr.row-link { cursor: pointer; }
     background: none; border: none; padding: 0; cursor: pointer; font-family: inherit;
     font-size: 10.5px; font-weight: 700; color: var(--primary); text-transform: none; letter-spacing: 0;
 }
-.lg-marks { display: flex; flex-direction: column; gap: 4px; }
-.lg-mark { display: flex; align-items: flex-start; gap: 7px; font-size: 11px; color: var(--text-secondary); font-weight: 600; }
-.lg-mark svg { flex-shrink: 0; margin-top: 1px; }
-.lg-mark span { font-weight: 500; color: var(--text-muted); line-height: 1.45; }
-.lg-mark b { color: var(--text-secondary); font-weight: 700; }
+.lg-marks { display: flex; flex-direction: column; gap: 8px; margin-top: 5px; }
+.lg-mark { font-size: 11px; line-height: 1.5; }
+.lg-mark > b { display: block; color: var(--text-secondary); font-weight: 700; margin-bottom: 3px; }
+.lg-mtypes { display: flex; flex-direction: column; gap: 2px; }
+.lg-mtype { display: flex; align-items: center; gap: 5px; color: var(--text-secondary); font-weight: 600; }
+.lg-mtype b { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: var(--text); }
+.lg-mtype .lg-mwhy { color: var(--text-muted); font-weight: 500; margin-left: 2px; }
+.lg-mchip { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.lg-mrow .lg-mto { display: flex; flex-wrap: wrap; gap: 2px 9px; }
+.lg-mrow .lg-mfrom { min-width: 92px; }
 .lg-matrix { margin-top: 5px; display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; }
-.lg-mrow { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; line-height: 1.5; }
+.lg-mrow { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; line-height: 1.6; padding: 1px 0; }
 .lg-mrow .lg-mfrom { font-weight: 700; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; }
 .lg-mrow .lg-mto { color: var(--text-muted); }
 
@@ -992,19 +1004,20 @@ table.matrix td.cell[data-n] { cursor: default; }
             <div class="graph-canvas-wrap">
                 <div id="cy"></div>
                 <div class="graph-legend" id="graph-legend">
+                    <button class="lg-reset" id="lg-reset" hidden aria-label="Показать все связи" title="Вернуть все типы связей">✕</button>
                     <button class="lg-toggle" id="lg-toggle" aria-label="Свернуть легенду" title="Свернуть легенду">▾</button>
                     <div class="lg-title lg-title-edges"><span class="lg-t-def">Связи на графе</span><span class="lg-t-focus">Легенда графа</span></div>
                     <div class="lg-scroll">
                         <div class="lg-title lg-title-types">Типы связей · цвет не действует</div>
                         <div class="lg-edges" id="lg-edges"></div>
                         <div class="lg-focus" id="lg-focus" hidden></div>
-                        <div class="lg-sub" id="lg-marks-box" hidden>
-                            <div class="lg-title">Пометки на узлах</div>
-                            <div class="lg-marks" id="lg-marks"></div>
-                        </div>
                         <div class="lg-sub">
-                            <button class="lg-more" id="lg-more" aria-expanded="false">Что с чем может быть связано ▾</button>
+                            <button class="lg-more" id="lg-more" aria-expanded="false">Схема связей типов ▾</button>
                             <div class="lg-matrix" id="lg-matrix" hidden></div>
+                        </div>
+                        <div class="lg-sub" id="lg-marks-box" hidden>
+                            <button class="lg-more" id="lg-marks-more" aria-expanded="false">Пометки на узлах ▾</button>
+                            <div class="lg-marks" id="lg-marks" hidden></div>
                         </div>
                     </div>
                 </div>
@@ -1284,7 +1297,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.3.2';
 
 const APP = {
     books: [],          // разобранные книги
@@ -2621,16 +2634,16 @@ function buildFromSheetJS(wb, book) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const NODE_TYPES = {
-    book:    { label: 'Книга',              color: '#0f172a', shape: 'round-rectangle' },
-    source:  { label: 'Внешний источник',   color: '#0d9488', shape: 'barrel' },
-    extbook: { label: 'Внешняя книга',      color: '#64748b', shape: 'cut-rectangle' },
-    query:   { label: 'Запрос Power Query', color: '#7c3aed', shape: 'round-rectangle' },
-    table:   { label: 'Умная таблица',      color: '#059669', shape: 'rectangle' },
-    sheet:   { label: 'Лист',               color: '#2563eb', shape: 'round-rectangle' },
-    name:    { label: 'Именованный диапазон', color: '#d97706', shape: 'tag' },
-    pivot:   { label: 'Сводная таблица',    color: '#db2777', shape: 'diamond' },
-    modeltable: { label: 'Таблица модели',  color: '#0891b2', shape: 'octagon' },
-    measure: { label: 'Мера модели',        color: '#4f46e5', shape: 'hexagon' },
+    book:    { label: 'Книга',              short: 'Книга',    color: '#0f172a', shape: 'round-rectangle' },
+    source:  { label: 'Внешний источник',   short: 'Источник', color: '#0d9488', shape: 'barrel' },
+    extbook: { label: 'Внешняя книга',      short: 'Книга',    color: '#64748b', shape: 'cut-rectangle' },
+    query:   { label: 'Запрос Power Query', short: 'Запрос',   color: '#7c3aed', shape: 'round-rectangle' },
+    table:   { label: 'Умная таблица',      short: 'Таблица',  color: '#059669', shape: 'rectangle' },
+    sheet:   { label: 'Лист',               short: 'Лист',     color: '#2563eb', shape: 'round-rectangle' },
+    name:    { label: 'Именованный диапазон', short: 'Имя',    color: '#d97706', shape: 'tag' },
+    pivot:   { label: 'Сводная таблица',    short: 'Сводная',  color: '#db2777', shape: 'diamond' },
+    modeltable: { label: 'Таблица модели',  short: 'Табл. модели', color: '#0891b2', shape: 'octagon' },
+    measure: { label: 'Мера модели',        short: 'Мера',     color: '#4f46e5', shape: 'hexagon' },
 };
 
 /**
@@ -5536,11 +5549,16 @@ const NODE_GLYPHS = {
 };
 
 /** @param color — явный цвет или 'currentColor', чтобы им управлял CSS. */
-function nodeGlyph(type, color) {
+function nodeGlyph(type, color, ring) {
     const meta = NODE_TYPES[type] || {};
     const shape = NODE_GLYPHS[meta.shape] || NODE_GLYPHS['round-rectangle'];
+    // Кольцо рисуем той же фигурой поверх заливки: так пометка на графе и в
+    // легенде — это буквально один и тот же силуэт, а не «похожая картинка».
+    const stroke = ring
+        ? ' stroke="' + ring + '" stroke-width="2" paint-order="stroke" stroke-linejoin="round"'
+        : '';
     return '<svg class="node-glyph" width="14" height="12" viewBox="0 0 14 12" aria-hidden="true" ' +
-        'fill="' + (color || meta.color || '#94a3b8') + '">' + shape + '</svg>';
+        'fill="' + (color || meta.color || '#94a3b8') + '"' + stroke + '>' + shape + '</svg>';
 }
 
 /**
@@ -5593,6 +5611,11 @@ function buildLegend() {
     APP.graph.edges.forEach(e => { counts[e.type] = (counts[e.type] || 0) + 1; });
     if (!APP.edgeFilter) APP.edgeFilter = new Set(Object.keys(counts));
 
+    const скрыто = Object.keys(counts).filter(t => APP.edgeFilter && !APP.edgeFilter.has(t)).length;
+    const rst = $('#lg-reset');
+    rst.hidden = !скрыто;
+    rst.title = 'Вернуть все типы связей (скрыто ' + скрыто + ')';
+
     $('#lg-edges').innerHTML = Object.entries(EDGE_TYPES)
         .filter(([t]) => counts[t])
         .map(([t, v]) => {
@@ -5632,38 +5655,46 @@ function buildLegend() {
     const hiddenNodes = APP.graph.nodes.filter(n => !n.isParent &&
         n.type === 'sheet' && n.state && n.state !== 'visible');
 
-    const markSvg = (dash, color) =>
-        '<svg width="26" height="18" viewBox="0 0 26 18" aria-hidden="true">' +
-        '<rect x="2.5" y="2.5" width="21" height="13" rx="3" fill="#e0f2fe" ' +
-        'stroke="' + color + '" stroke-width="2.5"' + (dash ? ' stroke-dasharray="4 3"' : '') + '/></svg>';
-
+    // Пометку получает не «узел вообще», а конкретные типы — поэтому и в
+    // легенде рисуем их собственные силуэты в их же цвете, с красным кольцом.
+    const ПОЧЕМУ = {
+        sheet:   'ячейки с ошибками',
+        name:    'ссылка на #ССЫЛКА!',
+        extbook: 'путь на локальном диске',
+        table:   'ошибки в данных',
+    };
     if (warnNodes.length) {
         const по = {};
         warnNodes.forEach(n => { по[n.type] = (по[n.type] || 0) + 1; });
-        const чего = Object.entries(по).map(([t, c]) =>
-            ((NODE_TYPES[t] || {}).label || t).toLowerCase() + ' — ' + fmtNum(c)).join(', ');
-        marks.push('<div class="lg-mark">' + markSvg(false, '#dc2626') +
-            '<span><b>Красная рамка — внутри есть ошибки.</b> Лист — ячейки с #ССЫЛКА!/#Н/Д, ' +
-            'имя — ссылка на #ССЫЛКА!, внешняя книга — путь на локальном диске. Сейчас: ' + esc(чего) + '. ' +
-            'У таблиц, сводных и запросов такой рамки не бывает: ошибки считаются по листу.</span></div>');
+        const строки = Object.entries(по).sort((a, b) => b[1] - a[1]).map(([t, c]) =>
+            '<span class="lg-mtype">' + nodeGlyph(t, null, '#dc2626') +
+            esc((NODE_TYPES[t] || {}).short || t) + ' <b>' + fmtNum(c) + '</b>' +
+            (ПОЧЕМУ[t] ? '<span class="lg-mwhy">· ' + esc(ПОЧЕМУ[t]) + '</span>' : '') + '</span>').join('');
+        marks.push('<div class="lg-mark"><b>Красная рамка — внутри есть ошибки</b>' +
+            '<span class="lg-mtypes">' + строки + '</span></div>');
     }
     if (hiddenNodes.length) {
-        marks.push('<div class="lg-mark">' + markSvg(true, '#94a3b8') +
-            '<span><b>Пунктирная рамка — лист скрыт.</b> Их ' + fmtNum(hiddenNodes.length) +
-            '. Скрытые листы чаще служебные: к ним обращаются из макросов и формул с ДВССЫЛ.</span></div>');
+        marks.push('<div class="lg-mark"><b>Пунктирная рамка — лист скрыт</b>' +
+            '<span class="lg-mtypes"><span class="lg-mtype">' + nodeGlyph('sheet') +
+            'Лист <b>' + fmtNum(hiddenNodes.length) + '</b>' +
+            '<span class="lg-mwhy">· служебный или спрятанный</span></span></span></div>');
     }
     $('#lg-marks-box').hidden = !marks.length;
     $('#lg-marks').innerHTML = marks.join('');
 
-    /* ── «что с чем может быть связано» — ответ на вопрос, почему тип не светится */
+    /* ── схема связей типов: ответ на вопрос, почему включённый тип не светится.
+          Полные названия сюда не помещались и превращали список в стену текста,
+          поэтому здесь короткие имена, а полные — в подсказке. */
     const nb = typeNeighbours();
+    const shortOf = x => (NODE_TYPES[x] || {}).short || x;
+    const fullOf  = x => (NODE_TYPES[x] || {}).label || x;
     $('#lg-matrix').innerHTML = TYPE_ORDER.filter(t => nb.has(t)).map(t => {
-        const meta = NODE_TYPES[t] || {};
-        const to = Array.from(nb.get(t)).filter(x => x !== 'book')
-            .map(x => (NODE_TYPES[x] || {}).label || x).sort();
-        return '<div class="lg-mrow"><span class="lg-mfrom">' +
-            nodeGlyph(t) + esc(meta.label || t) +
-            '</span><span class="lg-mto">↔ ' + esc(to.join(', ')) + '</span></div>';
+        const to = Array.from(nb.get(t)).filter(x => x !== 'book').sort();
+        return '<div class="lg-mrow" title="' + esc(fullOf(t) + ' связан с: ' + to.map(fullOf).join(', ')) + '">' +
+            '<span class="lg-mfrom"><span class="lg-mchip">' + nodeGlyph(t) + esc(shortOf(t)) + '</span></span>' +
+            '<span class="lg-mto">' + to.map(x =>
+                '<span class="lg-mchip">' + nodeGlyph(x) + esc(shortOf(x)) + '</span>').join('') +
+            '</span></div>';
     }).join('') || '<div class="lg-mrow"><span class="lg-mto">связей в книге нет</span></div>';
 }
 
@@ -5853,11 +5884,22 @@ function initEvents() {
         APP.showHiddenNames = !APP.showHiddenNames;
         renderSheets();
     };
+    $('#lg-marks-more').onclick = () => {
+        const m = $('#lg-marks'), b = $('#lg-marks-more');
+        m.hidden = !m.hidden;
+        b.setAttribute('aria-expanded', String(!m.hidden));
+        b.textContent = 'Пометки на узлах ' + (m.hidden ? '▾' : '▴');
+    };
+    // Спрятать тип связи кликом можно было всегда, а вернуть все разом — нет
+    $('#lg-reset').onclick = () => {
+        APP.edgeFilter = null;
+        renderGraph();
+    };
     $('#lg-more').onclick = () => {
         const m = $('#lg-matrix'), b = $('#lg-more');
         m.hidden = !m.hidden;
         b.setAttribute('aria-expanded', String(!m.hidden));
-        b.textContent = 'Что с чем может быть связано ' + (m.hidden ? '▾' : '▴');
+        b.textContent = 'Схема связей типов ' + (m.hidden ? '▾' : '▴');
     };
     // Наведение на строку легенды подсвечивает такие связи, клик — прячет их
     $('#lg-edges').addEventListener('mouseover', e => {
