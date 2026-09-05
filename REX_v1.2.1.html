@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.2.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.2.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1143,10 +1143,18 @@ table.matrix td.cell[data-n] { cursor: default; }
         <div class="card-title">Что удалять <span class="hint" id="cleanup-sum"></span></div>
         <div class="cl-groups" id="cleanup-groups"></div>
         <div class="cl-opts">
-            <label class="chk" title="Первый запуск лучше делать так: макрос ничего не удаляет, а выписывает на отдельный лист, что собирался тронуть">
-                <input type="checkbox" id="opt-dryrun" checked> Сначала только отчёт, без удаления
+            <label class="chk" title="Пробный проход: макрос ничего не удаляет, а выписывает на отдельный лист, что собирался тронуть">
+                <input type="checkbox" id="opt-dryrun" checked> <b>Шаг 1: пробный проход</b> — макрос ничего не удалит
             </label>
             <span class="muted" id="cleanup-protect"></span>
+        </div>
+        <div class="cleanup-warn" id="cleanup-step">
+            <b>Макрос запускается дважды — это не описка.</b>
+            <b>Шаг 1</b> (эта галка стоит): запустили — макрос создал лист «REX_очистка» со списком
+            и написал «книга НЕ изменена». Имена при этом на месте, и REX после такого прогона
+            покажет ровно то же самое — так и должно быть.
+            <b>Шаг 2</b>: снимите галку (или поменяйте в модуле <code>REPORT_ONLY = True</code>
+            на <code>False</code>), пересоберите макрос и запустите ещё раз — вот теперь имена удалятся.
         </div>
     </div>
 
@@ -1225,7 +1233,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1306,6 +1314,15 @@ function showNotification(message, type = 'error', duration = 6000) {
     div.querySelector('.notification-close').onclick = () => div.remove();
     stack.appendChild(div);
     if (duration) setTimeout(() => div.remove(), duration);
+}
+
+/** Файл в готовых байтах: нужен там, где кодировка не UTF-8 (модуль VBA). */
+function downloadBytes(filename, bytes, mime) {
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime || 'application/octet-stream' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
 function download(filename, content, mime) {
@@ -2866,7 +2883,8 @@ function runAudit(books, graph) {
         if (hiddenAll.length) {
             const по = new Map();
             hiddenAll.forEach(n => {
-                const row = { name: n.name, bare: bareName(n.name), broken: n.broken, uses: n.uses || 0 };
+                if (looksBuiltin(bareName(n.name))) return;
+                const row = { name: n.name, bare: bareName(n.name), hidden: true, broken: n.broken, uses: n.uses || 0 };
                 const g = NAME_GROUPS.find(x => x.test(row)) || NAME_GROUPS[NAME_GROUPS.length - 1];
                 по.set(g.id, (по.get(g.id) || 0) + 1);
             });
@@ -3926,38 +3944,42 @@ const NAME_GROUPS = [
       note: 'REX нашёл ссылки на это имя — в формулах, условном форматировании, проверке данных или рядах диаграмм. Удалять нельзя.',
       test: n => n.uses > 0, vba: null },
 
+    { id: 'visible_broken', risk: 'probably', label: 'Видимые имена со ссылкой #REF!',
+      note: 'Те самые #ССЫЛКА!, которые видно в Диспетчере имён (Ctrl+F3). Диапазон, на который они смотрели, удалён — работать они уже не могут. Не отмечено по умолчанию: имена видимые, кто-то мог держать их намеренно, чтобы позже переназначить на новый диапазон.',
+      test: n => !n.hidden && n.broken, vba: null },
+
     { id: 'xlchart', risk: 'danger', label: 'Служебные имена диаграмм (_xlchart…)',
       note: 'Excel создаёт их сам под ряды диаграмм и сам за ними следит. Удаление ломает диаграмму.',
-      test: n => /^_xlchart/i.test(n.bare), vba: 'Left$(чистое, 8) = "_xlchart"' },
+      test: n => /^_xlchart/i.test(n.bare), vba: 'Left$(bare, 8) = "_xlchart"' },
 
     { id: 'solver', risk: 'danger', label: 'Модель «Поиска решения» (solver_…)',
       note: 'Настройки надстройки «Поиск решения». Если ей пользуются на листе — удалять только через саму надстройку.',
-      test: n => /^solver_/i.test(n.bare), vba: 'LCase$(Left$(чистое, 7)) = "solver_"' },
+      test: n => /^solver_/i.test(n.bare), vba: 'LCase$(Left$(bare, 7)) = "solver_"' },
 
     { id: 'punct', risk: 'safe', label: 'Имена из служебных символов',
       note: 'Имена вида «\\», «___», «..» — обломки автозамены и импорта. Смысла не несут ни при каких условиях.',
-      test: n => /^[\\_.]+$/.test(n.bare), vba: 'Мусорное(чистое)' },
+      test: n => /^[\\_.]+$/.test(n.bare), vba: 'IsPunctOnly(bare)' },
 
     { id: 'blph', risk: 'safe', label: 'Надстройка Bloomberg (BLPH…)',
       note: 'Служебные якоря надстройки Bloomberg. Работают, только пока книга тянет котировки через неё. Если надстройки нет — мусор.',
-      test: n => /^BLPH\d*$/i.test(n.bare), vba: 'UCase$(Left$(чистое, 4)) = "BLPH"' },
+      test: n => /^BLPH\d*$/i.test(n.bare), vba: 'UCase$(Left$(bare, 4)) = "BLPH"' },
 
     { id: 'views', risk: 'safe', label: 'Режимы представления (…rwn…)',
       note: 'Остатки «Представлений» и печатных наборов из старых шаблонов финансовой отчётности. На расчёт не влияют.',
-      test: n => /rwn\d/i.test(n.bare), vba: 'InStr(1, LCase$(чистое), "rwn") > 0' },
+      test: n => /rwn\d/i.test(n.bare), vba: 'LCase$(bare) Like "*rwn#*"' },
 
     { id: 'addins', risk: 'safe', label: 'Отчётные и аудиторские надстройки (AS2…, AAA…, AAB…)',
       note: 'Следы надстроек, которые стояли у автора книги-предка. В вашей книге они уже ни к чему не подключены.',
       test: n => /^(AS2|AAA[_\d]|AAB[_\d])/i.test(n.bare),
-      vba: 'UCase$(Left$(чистое, 3)) = "AS2" Or UCase$(Left$(чистое, 3)) = "AAA" Or UCase$(Left$(чистое, 3)) = "AAB"' },
+      vba: 'UCase$(Left$(bare, 3)) = "AS2" Or ((UCase$(Left$(bare, 3)) = "AAA" Or UCase$(Left$(bare, 3)) = "AAB") And (Mid$(bare & " ", 4, 1) Like "[_0-9]"))' },
 
     { id: 'short', risk: 'danger', label: 'Слишком короткие имена (1–2 символа)',
       note: 'Односимвольное имя невозможно надёжно отличить от обычного текста в формуле, поэтому проверка «используется ли оно» здесь не работает. Безопаснее оставить.',
-      test: n => n.bare.length < 3, vba: 'Len(чистое) < 3' },
+      test: n => n.bare.length < 3, vba: 'Len(bare) < 3' },
 
     { id: 'broken', risk: 'safe', label: 'Прочие мёртвые: ссылаются на #REF!',
       note: 'Происхождение не опознано, но диапазон, на который смотрело имя, удалён. Восстановить нечего: такое имя не может работать ни при каких условиях.',
-      test: n => n.broken, vba: 'InStr(1, ссылка, "#REF!") > 0' },
+      test: n => n.broken, vba: 'InStr(1, refTo, "#REF!") > 0' },
 
     { id: 'other', risk: 'probably', label: 'Прочие скрытые имена',
       note: 'Происхождение не опознано, ссылка живая, но имя скрыто и ссылок на него в книге нет. Обычно это тот же мусор из чужих шаблонов — просто из надстройки, которую мы не знаем в лицо.',
@@ -3967,12 +3989,23 @@ const NAME_GROUPS = [
 /** Имя вида «Лист1!Имя» → «Имя»: у имён с областью «лист» так хранится область. */
 const bareName = x => { const i = String(x).lastIndexOf('!'); return i >= 0 ? String(x).slice(i + 1) : String(x); };
 
-/** Разбирает скрытые имена книги по группам. Возвращает [{group, names[]}]. */
-function classifyHiddenNames() {
+/** Похоже на встроенное имя Excel — трогать нельзя.
+    Проверка нарочно широкая (подстрока, а не начало строки): такие же имена с
+    лишними подчёркиваниями («__xlfn.BAHTTEXT») встречаются в мусоре, и терять
+    время на выяснение, настоящее оно или нет, дороже, чем оставить лишнее.
+    Ровно это же условие уходит в макрос — иначе интерфейс обещал бы удалить
+    то, что макрос молча оставляет. */
+const looksBuiltin = bare => bare.indexOf('_xlfn.') !== -1 || bare.indexOf('_xlnm.') !== -1;
+
+/** Разбирает имена-кандидаты на очистку по группам. Возвращает [{group, names[]}].
+    Видимые имена сюда попадают только сломанными: остальные человек видит в
+    Диспетчере имён и разбирается с ними сам, макрос для этого не нужен. */
+function classifyNames() {
     const rows = [];
     APP.books.forEach((b, bi) => (b.names || []).forEach(n => {
-        if (n.builtin || !n.hidden) return;
-        rows.push({ book: bi, name: n.name, bare: bareName(n.name), scope: n.scope,
+        if (n.builtin || looksBuiltin(bareName(n.name))) return;
+        if (!n.hidden && !n.broken) return;
+        rows.push({ book: bi, name: n.name, bare: bareName(n.name), scope: n.scope, hidden: n.hidden,
                     ref: n.ref, broken: n.broken, uses: n.uses || 0, usedIn: n.usedIn || null });
     }));
     const by = new Map();
@@ -3999,14 +4032,44 @@ function protectedNames() {
 }
 
 
+/* Windows-1251: редактор VBA читает импортируемый .bas в системной ANSI-кодировке,
+   а не в UTF-8. Отданный в UTF-8 файл превращал «REX_Очистка» в «REX_РѕС‡РёСЃС‚РєР°».
+   Поэтому файл отдаём в cp1251 — а сам код пишем латиницей, чтобы он остался
+   рабочим даже там, где системная кодировка вообще другая. */
+const CP1251_EXTRA = {
+    'Ё': 0xA8, 'ё': 0xB8, '«': 0xAB, '»': 0xBB, '—': 0x97, '–': 0x96, '№': 0xB9,
+    '…': 0x85, '“': 0x93, '”': 0x94, '„': 0x84, '‘': 0x91, '’': 0x92, '•': 0x95,
+    '°': 0xB0, '·': 0xB7, ' ': 0xA0, '‑': 0x2D,
+};
+/** Символы, которых в cp1251 нет вовсе: заменяем на понятный ASCII-аналог. */
+const CP1251_FOLD = { '→': '->', '←': '<-', '↔': '<->', '✓': '+', '✗': 'x', '≤': '<=', '≥': '>=', '×': 'x', '─': '-', '│': '|' };
+
+function toCp1251(str) {
+    const src = String(str).replace(/[→←↔✓✗≤≥×─│]/g, ch => CP1251_FOLD[ch] || '?');
+    const out = new Uint8Array(src.length);
+    let n = 0;
+    for (const ch of src) {
+        const c = ch.codePointAt(0);
+        let b;
+        if (c < 0x80) b = c;
+        else if (c >= 0x410 && c <= 0x44F) b = c - 0x410 + 0xC0;   // А…я идут подряд
+        else b = CP1251_EXTRA[ch];
+        out[n++] = (b == null) ? 0x3F : b;                          // «?» вместо непередаваемого
+    }
+    return out.slice(0, n);
+}
+
 /** Собирает модуль VBA под конкретную книгу и под выбранные группы.
     Макрос строится на правилах, а не на списке имён: работать он будет на
     той версии файла, которая открыта у человека, а она почти наверняка
     новее той, что разбирал REX. Единственное, что переносится списком —
-    защита: имена, у которых REX нашёл использование. */
+    защита: имена, у которых REX нашёл использование.
+
+    Имена процедур и переменных — латиницей намеренно: при импорте .bas
+    редактор VBA перекодирует текст, и кириллический идентификатор может
+    превратиться в мусор. Комментарии и сообщения при этом остаются русскими. */
 function buildCleanupMacro(selectedIds, opts) {
-    const groups = classifyHiddenNames();
-    const chosen = NAME_GROUPS.filter(g => selectedIds.indexOf(g.id) !== -1);
+    const groups = classifyNames();
     const prot   = protectedNames();
     const file   = (APP.books[0] || {}).fileName || 'книга';
     const total  = groups.reduce((a, g) => a + g.names.length, 0);
@@ -4015,46 +4078,52 @@ function buildCleanupMacro(selectedIds, opts) {
     const L = [];
     const c = t => L.push(t);
 
-    c('Attribute VB_Name = "REX_Очистка"');
+    c('Attribute VB_Name = "REX_Cleanup"');
     c("' ===========================================================================");
-    c("'  Очистка именованных диапазонов — собрано " + APP_NAME + ' v' + APP_VERSION);
-    c("'  Книга-образец: " + file.replace(/["']/g, ''));
-    c("'  Скрытых имён в ней: " + total + ', под удаление выбрано: ' + toKill);
+    c("'  Очистка именованных диапазонов - собрано " + APP_NAME + ' v' + APP_VERSION);
+    c("'  Книга-образец: " + String(file).replace(/["']/g, ''));
+    c("'  Имён-кандидатов в ней: " + total + ', выбрано к удалению: ' + toKill);
     c("'");
-    c("'  ПОРЯДОК РАБОТЫ");
-    c("'    1. Сделайте копию файла. Удаление имён не отменяется через Ctrl+Z.");
-    c("'    2. Alt+F11 → File → Import File… → этот .bas");
-    c("'    3. Alt+F8 → REX_ОчиститьИмена → «Выполнить».");
-    c("'       При ТОЛЬКО_ОТЧЁТ = True макрос ничего не удаляет: он лишь");
-    c("'       выписывает на лист «REX_очистка», что и почему собирался тронуть.");
-    c("'    4. Просмотрели отчёт → поставьте ТОЛЬКО_ОТЧЁТ = False и запустите снова.");
-    c("'    5. После удаления: Ctrl+Alt+F9 (полный пересчёт) и проверьте отчёты.");
+    c("'  ДВА ШАГА. Макрос запускается дважды, и это не описка:");
+    c("'");
+    c("'    ШАГ 1 - разведка. REPORT_ONLY = True (стоит ниже). Ничего не удаляется:");
+    c("'            макрос выписывает на лист «REX_очистка», что и почему он");
+    c("'            собирался тронуть. В колонке «Действие» будет «будет удалено».");
+    c("'");
+    c("'    ШАГ 2 - удаление. Посмотрели отчёт - поменяйте строку ниже на");
+    c("'            REPORT_ONLY = False и запустите макрос ещё раз. Только после");
+    c("'            этого имена действительно исчезнут.");
+    c("'");
+    c("'  Перед шагом 2 сделайте копию файла: удаление имён не отменяется Ctrl+Z.");
+    c("'  После шага 2: Ctrl+Alt+F9 (полный пересчёт) и проверьте отчёты.");
+    c("'");
+    c("'  Импорт: Alt+F11 -> File -> Import File... -> этот .bas");
+    c("'  Запуск: Alt+F8 -> REX_CleanNames -> «Выполнить»");
     c("' ===========================================================================");
     c('Option Explicit');
     c('');
-    c("' Что удалять. Строку можно править руками: имена групп те же, что в REX.");
-    c('Private Const ГРУППЫ_К_УДАЛЕНИЮ As String = "|' + selectedIds.join('|') + '|"');
+    c("' ШАГ 1 = True (только отчёт).  ШАГ 2 = False (удаление).");
+    c('Private Const REPORT_ONLY As Boolean = ' + (opts.dryRun ? 'True' : 'False'));
     c('');
-    c("' True — только отчёт, книга не меняется. Начинайте всегда с True.");
-    c('Private Const ТОЛЬКО_ОТЧЁТ As Boolean = ' + (opts.dryRun ? 'True' : 'False'));
+    c("' Какие группы удалять. Коды те же, что в REX; строку можно править руками.");
+    c('Private Const GROUPS_TO_DELETE As String = "|' + selectedIds.join('|') + '|"');
     c('');
-    c("' Имена, у которых REX нашёл использование в формулах, условном форматировании,");
-    c("' проверке данных или рядах диаграмм. Не удаляются ни при каких настройках.");
-    c('Private ЗАЩИТА As Object');
+    c("' Имена, у которых REX нашёл использование - в формулах, условном");
+    c("' форматировании, проверке данных или рядах диаграмм. Не удаляются никогда.");
+    c('Private PROTECTED_NAMES As Object');
     c('');
-    c('Public Sub REX_ОчиститьИмена()');
-    c('    Dim i As Long, имя As String, чистое As String, ссылка As String');
-    c('    Dim группа As String, удалить As Boolean');
-    c('    Dim удалено As Long, оставлено As Long, ошибок As Long, всего As Long');
-    c('    Dim буфер() As String, строк As Long, t As Single');
+    c('Public Sub REX_CleanNames()');
+    c('    Dim i As Long, nm As String, refTo As String, grp As String, kill As Boolean');
+    c('    Dim deleted As Long, kept As Long, failed As Long, total As Long');
+    c('    Dim buf() As String, rows As Long, t As Single');
     c('');
-    c('    ЗаполнитьЗащиту');
+    c('    FillProtected');
     c('    t = Timer');
     c('');
-    c('    If Not ТОЛЬКО_ОТЧЁТ Then');
+    c('    If Not REPORT_ONLY Then');
     c('        If MsgBox("Удалить имена выбранных групп безвозвратно?" & vbCrLf & vbCrLf & _');
-    c('                  "Группы: " & ГРУППЫ_К_УДАЛЕНИЮ & vbCrLf & _');
-    c('                  "Работайте на копии файла — отмены не будет.", _');
+    c('                  "Группы: " & GROUPS_TO_DELETE & vbCrLf & _');
+    c('                  "Работайте на копии файла - отмены не будет.", _');
     c('                  vbYesNo + vbExclamation, "REX") <> vbYes Then Exit Sub');
     c('    End If');
     c('');
@@ -4062,115 +4131,128 @@ function buildCleanupMacro(selectedIds, opts) {
     c('    Application.DisplayAlerts = False');
     c('    Application.Calculation = xlCalculationManual');
     c('');
-    c('    всего = ThisWorkbook.Names.Count');
-    c('    ReDim буфер(1 To WorksheetFunction.Max(всего, 1), 1 To 5)');
+    c('    total = ThisWorkbook.Names.Count');
+    c('    ReDim buf(1 To IIf(total < 1, 1, total), 1 To 5)');
     c('');
     c("    ' С конца: после каждого удаления коллекция перенумеровывается");
-    c('    For i = всего To 1 Step -1');
-    c('        имя = "": ссылка = "": группа = ""');
+    c('    For i = total To 1 Step -1');
+    c('        nm = "": refTo = "": grp = ""');
     c('        On Error Resume Next');
-    c('        имя = ThisWorkbook.Names(i).Name');
-    c('        ссылка = ThisWorkbook.Names(i).RefersTo');
-    c('        группа = ГруппаИмени(ThisWorkbook.Names(i))');
+    c('        nm = ThisWorkbook.Names(i).Name');
+    c('        refTo = ThisWorkbook.Names(i).RefersTo');
+    c('        grp = GroupOf(ThisWorkbook.Names(i))');
     c('        On Error GoTo 0');
     c('');
-    c('        If Len(имя) > 0 Then');
-    c('            удалить = (InStr(1, ГРУППЫ_К_УДАЛЕНИЮ, "|" & группа & "|") > 0)');
-    c('            строк = строк + 1');
-    c('            буфер(строк, 1) = имя');
-    c('            буфер(строк, 2) = ОписаниеГруппы(группа)');
-    c("            буфер(строк, 3) = \"'\" & ссылка");
-    c('            буфер(строк, 4) = IIf(удалить, IIf(ТОЛЬКО_ОТЧЁТ, "будет удалено", "удалено"), "оставлено")');
-    c('            буфер(строк, 5) = группа');
+    c('        If Len(nm) > 0 Then');
+    c('            kill = (InStr(1, GROUPS_TO_DELETE, "|" & grp & "|") > 0)');
+    c('            rows = rows + 1');
+    c('            buf(rows, 1) = nm');
+    c('            buf(rows, 2) = GroupTitle(grp)');
+    c('            buf(rows, 3) = "\x27" & refTo');
+    c('            buf(rows, 4) = IIf(kill, IIf(REPORT_ONLY, "будет удалено", "удалено"), "оставлено")');
+    c('            buf(rows, 5) = grp');
     c('');
-    c('            If удалить And Not ТОЛЬКО_ОТЧЁТ Then');
+    c('            If kill And Not REPORT_ONLY Then');
     c('                On Error Resume Next');
     c('                ThisWorkbook.Names(i).Delete');
     c('                If Err.Number = 0 Then');
-    c('                    удалено = удалено + 1');
+    c('                    deleted = deleted + 1');
     c('                Else');
-    c('                    ошибок = ошибок + 1');
-    c('                    буфер(строк, 4) = "не удалилось: " & Err.Description');
+    c('                    failed = failed + 1');
+    c('                    buf(rows, 4) = "не удалилось: " & Err.Description');
     c('                End If');
     c('                Err.Clear');
     c('                On Error GoTo 0');
-    c('            ElseIf удалить Then');
-    c('                удалено = удалено + 1');
+    c('            ElseIf kill Then');
+    c('                deleted = deleted + 1');
     c('            Else');
-    c('                оставлено = оставлено + 1');
+    c('                kept = kept + 1');
     c('            End If');
     c('        End If');
     c('');
-    c('        If i Mod 500 = 0 Then Application.StatusBar = "REX: осталось проверить " & i & " имён…"');
+    c('        If i Mod 500 = 0 Then Application.StatusBar = "REX: осталось проверить " & i & " имён..."');
     c('    Next i');
     c('');
-    c('    ЗаписатьОтчёт буфер, строк');
+    c('    WriteReport buf, rows');
     c('');
     c('    Application.StatusBar = False');
     c('    Application.Calculation = xlCalculationAutomatic');
     c('    Application.DisplayAlerts = True');
     c('    Application.ScreenUpdating = True');
     c('');
-    c('    MsgBox IIf(ТОЛЬКО_ОТЧЁТ, "Пробный проход, книга не изменена." & vbCrLf & vbCrLf, "") & _');
-    c('           IIf(ТОЛЬКО_ОТЧЁТ, "Под удаление попадает: ", "Удалено: ") & удалено & vbCrLf & _');
-    c('           "Оставлено: " & оставлено & vbCrLf & _');
-    c('           "Не удалилось: " & ошибок & vbCrLf & vbCrLf & _');
-    c('           "Подробности — на листе «REX_очистка»." & vbCrLf & _');
-    c('           "Заняло " & Format$(Timer - t, "0.0") & " с.", vbInformation, "REX"');
+    c('    If REPORT_ONLY Then');
+    c('        MsgBox "ШАГ 1 из 2: это была разведка, книга НЕ изменена." & vbCrLf & vbCrLf & _');
+    c('               "Под удаление попадает: " & deleted & vbCrLf & _');
+    c('               "Останется: " & kept & vbCrLf & vbCrLf & _');
+    c('               "Что именно - смотрите на листе «REX_очистка»." & vbCrLf & vbCrLf & _');
+    c('               "ШАГ 2: чтобы удалить, поменяйте в начале модуля" & vbCrLf & _');
+    c('               "REPORT_ONLY = True на REPORT_ONLY = False" & vbCrLf & _');
+    c('               "и запустите макрос ещё раз.", vbInformation, "REX - шаг 1 из 2"');
+    c('    Else');
+    c('        MsgBox "Удалено: " & deleted & vbCrLf & _');
+    c('               "Оставлено: " & kept & vbCrLf & _');
+    c('               "Не удалилось: " & failed & vbCrLf & vbCrLf & _');
+    c('               "Подробности - на листе «REX_очистка»." & vbCrLf & _');
+    c('               "Теперь нажмите Ctrl+Alt+F9 и проверьте отчёты." & vbCrLf & _');
+    c('               "Заняло " & Format$(Timer - t, "0.0") & " с.", vbInformation, "REX - готово"');
+    c('    End If');
     c('End Sub');
     c('');
     c("' ─────────────────────────── классификация ───────────────────────────");
     c("' Порядок проверок повторяет порядок в REX: имя попадает в первую");
-    c("' подошедшую группу, поэтому менять его местами нельзя.");
-    c('Private Function ГруппаИмени(n As Name) As String');
-    c('    Dim чистое As String, ссылка As String, видимое As Boolean');
-    c('    видимое = True: ссылка = ""');
+    c("' подошедшую группу, поэтому менять их местами нельзя.");
+    c('Private Function GroupOf(n As Name) As String');
+    c('    Dim bare As String, refTo As String, isVisible As Boolean');
+    c('    isVisible = True: refTo = ""');
     c('    On Error Resume Next');
-    c('    видимое = n.Visible');
-    c('    ссылка = n.RefersTo');
+    c('    isVisible = n.Visible');
+    c('    refTo = n.RefersTo');
     c('    On Error GoTo 0');
-    c('    чистое = ЧистоеИмя(n.Name)');
+    c('    bare = BareName(n.Name)');
     c('');
-    c('    If видимое Then ГруппаИмени = "visible": Exit Function');
-    c('    If InStr(1, чистое, "_xlnm.") > 0 Or InStr(1, чистое, "_xlfn.") > 0 Then');
-    c('        ГруппаИмени = "builtin": Exit Function');
+    c('    If InStr(1, bare, "_xlnm.") > 0 Or InStr(1, bare, "_xlfn.") > 0 Then');
+    c('        GroupOf = "builtin": Exit Function');
     c('    End If');
-    c('    If ЗАЩИТА.Exists(чистое) Then ГруппаИмени = "used": Exit Function');
+    c('    If PROTECTED_NAMES.Exists(bare) Then GroupOf = "used": Exit Function');
+    c('    If isVisible Then');
+    c('        GroupOf = IIf(InStr(1, refTo, "#REF!") > 0, "visible_broken", "visible")');
+    c('        Exit Function');
+    c('    End If');
     c('%%GROUPS%%');
-    c('    ГруппаИмени = "other"');
+    c('    GroupOf = "other"');
     c('End Function');
     c('');
-    c('Private Function ОписаниеГруппы(ByVal g As String) As String');
+    c('Private Function GroupTitle(ByVal g As String) As String');
     c('    Select Case g');
     c('%%DESCR%%');
-    c('        Case "visible": ОписаниеГруппы = "видимое имя — Диспетчер имён его показывает"');
-    c('        Case "builtin": ОписаниеГруппы = "встроенное имя Excel (область печати, фильтр)"');
-    c('        Case Else:      ОписаниеГруппы = g');
+    c('        Case "visible": GroupTitle = "видимое имя - Диспетчер имён его показывает"');
+    c('        Case "builtin": GroupTitle = "встроенное имя Excel (область печати, фильтр)"');
+    c('        Case Else:      GroupTitle = g');
     c('    End Select');
     c('End Function');
     c('');
-    c("' «Лист1!Имя» → «Имя»");
-    c('Private Function ЧистоеИмя(ByVal имя As String) As String');
+    c("' «Лист1!Имя» -> «Имя»");
+    c('Private Function BareName(ByVal nm As String) As String');
     c('    Dim p As Long');
-    c('    p = InStrRev(имя, "!")');
-    c('    ЧистоеИмя = IIf(p > 0, Mid$(имя, p + 1), имя)');
+    c('    p = InStrRev(nm, "!")');
+    c('    BareName = IIf(p > 0, Mid$(nm, p + 1), nm)');
     c('End Function');
     c('');
     c("' Имя целиком из служебных символов: «\\», «___», «..»");
-    c('Private Function Мусорное(ByVal s As String) As Boolean');
+    c('Private Function IsPunctOnly(ByVal s As String) As Boolean');
     c('    Dim i As Long, ch As String');
     c('    If Len(s) = 0 Then Exit Function');
     c('    For i = 1 To Len(s)');
     c('        ch = Mid$(s, i, 1)');
     c('        If ch <> "_" And ch <> "\\" And ch <> "." Then Exit Function');
     c('    Next i');
-    c('    Мусорное = True');
+    c('    IsPunctOnly = True');
     c('End Function');
     c('');
     c("' ─────────────────────────── отчёт на лист ───────────────────────────");
-    c('Private Sub ЗаписатьОтчёт(ByRef буфер() As String, ByVal строк As Long)');
+    c('Private Sub WriteReport(ByRef buf() As String, ByVal rows As Long)');
     c('    Dim ws As Worksheet');
-    c('    If строк = 0 Then Exit Sub');
+    c('    If rows = 0 Then Exit Sub');
     c('    On Error Resume Next');
     c('    Set ws = ThisWorkbook.Worksheets("REX_очистка")');
     c('    On Error GoTo 0');
@@ -4179,38 +4261,39 @@ function buildCleanupMacro(selectedIds, opts) {
     c('        ws.Name = "REX_очистка"');
     c('    End If');
     c('    ws.Cells.Clear');
-    c('    ws.Range("A1:E1").Value = Array("Имя", "Группа", "Ссылается на", "Действие", "Код группы")');
-    c('    ws.Range("A1:E1").Font.Bold = True');
-    c('    ws.Range("A2").Resize(строк, 5).Value = буфер');
+    c('    ws.Range("A1").Value = IIf(REPORT_ONLY, _');
+    c('        "ШАГ 1: разведка. Книга НЕ изменена. Чтобы удалить - REPORT_ONLY = False и запустить снова.", _');
+    c('        "ШАГ 2: имена удалены. Нажмите Ctrl+Alt+F9 и проверьте отчёты.")');
+    c('    ws.Range("A1").Font.Bold = True');
+    c('    ws.Range("A2:E2").Value = Array("Имя", "Группа", "Ссылается на", "Действие", "Код группы")');
+    c('    ws.Range("A2:E2").Font.Bold = True');
+    c('    ws.Range("A3").Resize(rows, 5).Value = buf');
     c('    ws.Columns("A:E").AutoFit');
-    c('    ws.Rows(1).AutoFilter');
+    c('    ws.Rows(2).AutoFilter');
     c('End Sub');
     c('');
     c("' ──────────────────── защита: имена, которые работают ────────────────");
-    c('Private Sub ЗаполнитьЗащиту()');
-    c('    Set ЗАЩИТА = CreateObject("Scripting.Dictionary")');
-    c('    ЗАЩИТА.CompareMode = 1   \' без учёта регистра, как в самом Excel');
+    c('Private Sub FillProtected()');
+    c('    Set PROTECTED_NAMES = CreateObject("Scripting.Dictionary")');
+    c("    PROTECTED_NAMES.CompareMode = 1   ' без учёта регистра, как в самом Excel");
     c('%%PROTECT%%');
     c('End Sub');
 
     /* Тела групп и описания — из того же NAME_GROUPS, что рисует интерфейс */
-    const gl = [];
-    NAME_GROUPS.forEach(g => {
-        if (!g.vba) return;
-        gl.push('    If ' + g.vba + ' Then ГруппаИмени = "' + g.id + '": Exit Function');
-    });
+    const gl = NAME_GROUPS.filter(g => g.vba)
+        .map(g => '    If ' + g.vba + ' Then GroupOf = "' + g.id + '": Exit Function');
     const dl = NAME_GROUPS.map(g =>
-        '        Case "' + g.id + '": ОписаниеГруппы = "' + g.label.replace(/"/g, "'") + '"');
+        '        Case "' + g.id + '": GroupTitle = "' + g.label.replace(/"/g, "'") + '"');
 
-    /* Защищённый список: VBA не переваривает строки длиннее ~1000 символов,
+    /* Защищённый список: строка кода в VBA ограничена ~1000 символов,
        поэтому раскладываем по несколько имён в строку. */
     const pl = [];
     if (!prot.length) {
-        pl.push("    ' Использованных имён REX не нашёл — защищать нечего.");
+        pl.push("    ' Использованных имён REX не нашёл - защищать нечего.");
     } else {
         for (let i = 0; i < prot.length; i += 4) {
             pl.push('    ' + prot.slice(i, i + 4)
-                .map(x => 'ЗАЩИТА("' + String(x).replace(/"/g, '""') + '") = 1').join(': '));
+                .map(x => 'PROTECTED_NAMES("' + String(x).replace(/"/g, '""') + '") = 1').join(': '));
         }
     }
 
@@ -4220,13 +4303,12 @@ function buildCleanupMacro(selectedIds, opts) {
         .replace('%%PROTECT%%', pl.join('\n'));
 }
 
-
 /* ─────────────── ОЧИСТКА: отрисовка и конструктор ─────────────── */
 
 const CLEANUP_ROWS = 400;   // в таблице; полный список — в CSV
 
 function renderCleanup() {
-    const groups = classifyHiddenNames();
+    const groups = classifyNames();
     APP.cleanupGroups = groups;
 
     // Первый выбор делаем за человека, но только из безопасного: группы с
@@ -4268,6 +4350,13 @@ function renderCleanup() {
     $('#cleanup-protect').textContent = prot.length
         ? 'В макрос уйдёт защита на ' + fmtNum(prot.length) + ' имён, у которых REX нашёл использование.'
         : 'Использованных имён REX не нашёл — защищать в макросе нечего.';
+
+    // Текст блока «два шага» меняется вместе с режимом: он и есть ответ на
+    // вопрос «почему после запуска ничего не изменилось».
+    const step = $('#cleanup-step');
+    step.hidden = !total;
+    step.style.background = $('#opt-dryrun').checked ? '#fef3c7' : '#fee2e2';
+    step.style.color = $('#opt-dryrun').checked ? '#92400e' : '#991b1b';
 
     $('#cleanup-macro').textContent = total
         ? buildCleanupMacro(APP.cleanupPick, { dryRun: $('#opt-dryrun').checked })
@@ -5260,7 +5349,9 @@ function initEvents() {
         setTimeout(() => { b.textContent = was; }, 1800);
     };
     $('#btn-macro-download').onclick = () => {
-        download('REX_очистка_имён.bas', $('#cleanup-macro').textContent, 'text/plain;charset=utf-8');
+        // Именно cp1251: редактор VBA читает .bas в системной ANSI-кодировке,
+        // и UTF-8 превращал русские комментарии в «РѕС‡РёСЃС‚РєР°».
+        downloadBytes('REX_cleanup.bas', toCp1251($('#cleanup-macro').textContent), 'text/plain');
     };
     $('#btn-hidden-csv').onclick = () => {
         download('REX_скрытые_имена.csv', cleanupCSV(), 'text/csv;charset=utf-8');
