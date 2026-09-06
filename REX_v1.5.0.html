@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.4.5 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.5.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -105,9 +105,18 @@ body {
     text-transform: uppercase; border-bottom: 1px solid rgba(255,255,255,.06);
     display: flex; justify-content: space-between; align-items: center; color: #f8fafc;
 }
+.sidebar-header .brand-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sidebar-header .brand {
     background: linear-gradient(135deg, #34d399, #60a5fa);
     -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+/* Версия переехала сюда из подвала: подвал занят подписью проекта, а в свёрнутом
+   меню его вообще не видно. Свои letter-spacing и text-transform нужны потому, что
+   шапка задаёт uppercase и разрядку 2px — «v1.5.0» от них разъезжается. */
+.sidebar-header .ver-badge {
+    font-size: 10px; font-weight: 700; letter-spacing: 0; text-transform: none;
+    padding: 3px 7px; border-radius: 6px;
+    background: rgba(59,130,246,.2); color: #60a5fa; flex-shrink: 0;
 }
 .nav-menu { flex: 1; padding: 16px 0; display: flex; flex-direction: column; overflow-y: auto; }
 .nav-item {
@@ -130,7 +139,11 @@ body {
 }
 .nav-badge.warn { background: rgba(245,158,11,.2); color: #fbbf24; }
 .nav-badge.bad  { background: rgba(239,68,68,.2);  color: #f87171; }
-.sidebar-footer { padding: 14px 24px; border-top: 1px solid rgba(255,255,255,.06); font-size: 11px; color: #94a3b8; }
+/* Строка целиком в одну не влезает: сайдбар 260 px, доступно 211, а текст просит
+   246 даже на 10px. Поэтому переносим осознанно — по разделителю, а не посреди
+   «AI-Augmented», как это делал браузер сам. */
+.sidebar-footer { padding: 14px 24px; border-top: 1px solid rgba(255,255,255,.06); font-size: 11px; color: #94a3b8; line-height: 1.5; }
+.sidebar-footer span { white-space: nowrap; }
 .sidebar-collapse-btn {
     display: none; background: none; border: none; color: #64748b; cursor: pointer;
     padding: 5px; border-radius: 6px; transition: color .15s, background .15s;
@@ -143,7 +156,7 @@ body {
     body.sidebar-collapsed .sidebar { width: var(--sidebar-w-collapsed); }
     body.sidebar-collapsed .main-wrapper { margin-left: var(--sidebar-w-collapsed); width: calc(100% - var(--sidebar-w-collapsed)); }
     body.sidebar-collapsed .sidebar-header { justify-content: center; padding: 20px 0; }
-    body.sidebar-collapsed .sidebar-header .brand { display: none; }
+    body.sidebar-collapsed .sidebar-header .brand-wrap { display: none; }
     body.sidebar-collapsed .sidebar-collapse-btn svg { transform: rotate(180deg); }
     body.sidebar-collapsed .nav-item { justify-content: center; padding: 12px 0; gap: 0; }
     body.sidebar-collapsed .nav-item .nav-label, body.sidebar-collapsed .nav-badge { display: none; }
@@ -153,7 +166,7 @@ body {
 /* ═══════════════════ MAIN ═══════════════════ */
 .main-wrapper {
     margin-left: var(--sidebar-w); flex: 1; padding: 22px 26px;
-    width: calc(100% - var(--sidebar-w)); min-width: 0;
+    width: calc(100% - var(--sidebar-w)); min-width: 0; min-height: 0;
     transition: margin-left .3s cubic-bezier(.4,0,.2,1), width .3s cubic-bezier(.4,0,.2,1);
     display: flex; flex-direction: column;
 }
@@ -170,6 +183,24 @@ body {
 .header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; flex-wrap: wrap; gap: 12px; }
 .page-title { font-size: 21px; font-weight: 700; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .page-title .subtitle { font-size: 13px; font-weight: 500; color: var(--text-muted); }
+
+/* Разобранный файл под заголовком «Обзора». Раньше имя стояло бледным
+   подзаголовком у h1 и терялось; здесь оно — самостоятельный объект. */
+.file-badge {
+    display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 14px; margin-bottom: 16px; border-radius: 10px;
+    background: var(--card); border: 1px solid var(--border-light); box-shadow: var(--shadow);
+}
+.file-badge svg { width: 17px; height: 17px; stroke: var(--primary); stroke-width: 2; fill: none; flex-shrink: 0; }
+.file-badge .fb-name { font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
+.file-badge .fb-meta { font-size: 12px; color: var(--text-muted); font-weight: 600; }
+.file-badge .fb-sep { color: var(--border); }
+
+/* Граф — единственная страница, которая должна ровно вписаться в окно: холст
+   тянется до низа, а прокручиваются внутренние панели. Остальные страницы
+   прокручиваются окном, как раньше, поэтому запираем высоту только здесь. */
+body.graph-page { height: 100vh; overflow: hidden; }
+body.graph-page .main-wrapper { height: 100vh; overflow: hidden; }
 
 .page-content { display: none; width: 100%; }
 .page-content.active { display: flex !important; flex-direction: column; flex: 1; min-height: 0; }
@@ -317,12 +348,14 @@ tr.row-link { cursor: pointer; }
 <style>
 /* ═══════════════════ ГРАФ СВЯЗЕЙ ═══════════════════ */
 .graph-shell {
-    display: flex; flex-direction: column; gap: 12px; min-height: 0;
-    /* Определённая высота (не flex:1) — иначе панель деталей с длинным списком
-       растягивает всю страницу, и легенда уезжает за нижний край экрана.
-       flex: none обязателен: при flex:1 базис 0 перебил бы height. */
-    flex: none;
-    height: clamp(460px, calc(100vh - 160px), 1100px);
+    display: flex; flex-direction: column; gap: 12px;
+    /* Высоту берём у флекс-цепочки, а не из calc(100vh - 160px): та оценка шапки
+       была завышена на 74 px, и внизу всегда оставалась пустая полоса, а потолок
+       1100 px не давал графу расти на высоком мониторе.
+       min-height: 0 обязателен во всей цепочке (main-wrapper → .page-content →
+       сюда → .graph-body): без него флекс-элемент нельзя сжать меньше содержимого,
+       и панель деталей с длинным списком снова распирала бы страницу. */
+    flex: 1; min-height: 0;
 }
 .graph-toolbar {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -434,8 +467,11 @@ tr.row-link { cursor: pointer; }
 }
 
 /* Легенда поверх холста */
+/* Левый верхний угол: туда падает взгляд первым, и по замеру на «Слоями ↓»
+   под легендой оказывается 10 узлов против 16 в левом нижнем. Чтобы под ней не
+   пряталось вообще ничего, «Вписать» резервирует место — см. fitGraph(). */
 .graph-legend {
-    position: absolute; left: 12px; bottom: 12px; background: rgba(255,255,255,.94);
+    position: absolute; left: 12px; top: 12px; background: rgba(255,255,255,.94);
     backdrop-filter: blur(6px); border: 1px solid var(--border); border-radius: 10px;
     padding: 9px 11px; font-size: 11px; box-shadow: var(--shadow); max-width: min(300px, 62%);
 }
@@ -686,14 +722,28 @@ tr.row-link { cursor: pointer; }
 .gd-link:hover { background: var(--primary-light); border-color: var(--primary); }
 .gd-link .gd-count { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); }
 .gd-link-body { min-width: 0; flex: 1; }
-.gd-link-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Раньше здесь было nowrap + многоточие. На реальной книге из 46 объектов
+   обрезалось 9: текст получает 245 px, а 90% названий требуют до 360 px —
+   ровно две строки. Клампом в 2 строки закрываются все замеренные случаи. */
+.gd-link-name {
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden; overflow-wrap: anywhere; line-height: 1.35;
+}
+/* У внешних источников подписью служил полный путь (до 1116 px — не влезет ни в
+   какую ширину панели), и многоточие срезало ХВОСТ, то есть само имя файла.
+   Теперь имя файла всегда целиком, а от пути остаётся ближайшая папка. */
+.gd-link-path {
+    display: block; font-size: 10.5px; font-weight: 600; color: var(--text-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px;
+}
 .gd-rel { display: inline-block; font-size: 10px; font-weight: 700; margin-right: 6px; }
 .gd-rel-far { color: var(--text-muted); font-weight: 600; font-style: italic; }
 .gd-empty { color: var(--text-muted); font-size: 12px; font-style: italic; }
 
 @media (max-width: 900px) {
     /* На узком экране колонкой: высоту отдаём содержимому, но панель ограничиваем */
-    .graph-shell { height: auto; }
+    body.graph-page, body.graph-page .main-wrapper { height: auto; overflow: visible; }
+    .graph-shell { flex: none; height: auto; }
     .graph-body { flex-direction: column; height: auto; }
     .graph-canvas-wrap { min-height: 340px; }
     .graph-details { width: 100%; max-height: 46vh; }
@@ -864,7 +914,10 @@ table.matrix td.cell[data-n] { cursor: default; }
 <!-- ─────────────── SIDEBAR ─────────────── -->
 <aside class="sidebar" id="sidebar" role="complementary" aria-label="Навигация">
     <div class="sidebar-header">
-        <span class="brand" title="Reverse Engineering Excel">REX</span>
+        <span class="brand-wrap">
+            <span class="brand" title="Reverse Engineering Excel">REX</span>
+            <span class="ver-badge" id="sidebar-version"></span>
+        </span>
         <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" aria-label="Свернуть меню" title="Свернуть меню">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
         </button>
@@ -927,8 +980,7 @@ table.matrix td.cell[data-n] { cursor: default; }
     </nav>
 
     <div class="sidebar-footer">
-        <span id="sidebar-version"></span> · всё считается локально<br>
-        <span id="sidebar-file" class="mono" style="color:#cbd5e1"></span>
+        <span>Powered by Gadalov BI |</span> <span>AI-Augmented Solutions</span>
     </div>
 </aside>
 
@@ -991,12 +1043,13 @@ table.matrix td.cell[data-n] { cursor: default; }
 <!-- ═══════════ ОБЗОР ═══════════ -->
 <section class="page-content" id="page-overview" role="tabpanel">
     <div class="header-top">
-        <h1 class="page-title">Обзор <span class="subtitle" id="overview-sub"></span></h1>
+        <h1 class="page-title">Обзор <span class="subtitle">что за файл и что с ним не так</span></h1>
         <button class="btn btn-outline btn-sm" data-goto="upload">
             <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             Другой файл
         </button>
     </div>
+    <div id="overview-file"></div>
     <div class="kpi-grid" id="overview-kpi"></div>
     <div class="card">
         <div class="card-title">Индекс здоровья книги <span class="hint">0 — всё плохо, 100 — к файлу нет претензий</span></div>
@@ -1383,7 +1436,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.4.5';
+const APP_VERSION = '1.5.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1499,11 +1552,12 @@ function goPage(page) {
         b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
     $$('.page-content').forEach(p => p.classList.toggle('active', p.id === 'page-' + page));
+    document.body.classList.toggle('graph-page', page === 'graph');
     $('#sidebar').classList.remove('open');
     $('#overlay').classList.remove('open');
     window.scrollTo(0, 0);
     // Cytoscape при скрытом контейнере считает размер нулевым — пересчитываем при показе
-    if (page === 'graph' && window.__cy) setTimeout(() => { window.__cy.resize(); window.__cy.fit(undefined, 40); }, 30);
+    if (page === 'graph' && window.__cy) setTimeout(() => { window.__cy.resize(); fitGraph(window.__cy, 40); }, 30);
 }
 
 function unlockPages() {
@@ -3646,7 +3700,6 @@ function renderBadges() {
     const safe = (APP.cleanupGroups || [])
         .filter(g => g.group.risk === 'safe').reduce((a, g) => a + g.names.length, 0);
     set('#badge-cleanup', safe ? fmtNum(safe) : null);
-    $('#sidebar-file').textContent = APP.books.length === 1 ? APP.books[0].fileName : APP.books.length + ' книги';
 }
 
 function renderLoadedList() {
@@ -3681,7 +3734,17 @@ function renderOverview() {
     const pivots = sum(b => (b.pivots || []).length);
     const hidden = sum(b => b.sheets.filter(s => s.state !== 'visible').length);
 
-    $('#overview-sub').textContent = B.length === 1 ? B[0].fileName : B.length + ' книги';
+    const ICO = '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+    $('#overview-file').innerHTML = B.map(b => {
+        const conf = FULL_FORMATS.has(b.format) ? ['full', 'полный разбор']
+                   : b.format === 'xlsb' ? ['partial', 'частичный разбор']
+                   : ['partial', 'ограниченный разбор'];
+        return '<div class="file-badge">' + ICO +
+            '<span class="fb-name">' + esc(b.fileName) + '</span>' +
+            '<span class="fb-sep">·</span><span class="fb-meta">' + fmtBytes(b.size) + '</span>' +
+            '<span class="fb-sep">·</span><span class="fb-meta">' + b.sheets.length + ' лист.</span>' +
+            '<span class="confidence ' + conf[0] + '">' + conf[1] + '</span></div>';
+    }).join('');
 
     const kpi = [
         { label: 'Листов',        value: sheets,   sub: hidden ? hidden + ' скрытых' : 'все видимые', color: 'var(--n-sheet)', page: 'sheets' },
@@ -5500,12 +5563,70 @@ function packOrphans(cy) {
     return true;
 }
 
+/**
+ * Вписать граф так, чтобы под легендой не пряталось ни одного узла.
+ *
+ * Безусловный резерв места стоил бы дорого: легенда занимает 221 px из 1414,
+ * а в раскладках «Потоком →» и «Кластерами» перекрытия нет вообще — граф просто
+ * стал бы на 15% мельче ни за что. Поэтому два прохода: обычное вписывание,
+ * проверка пересечения, и пересчёт только если узлы реально накрыты.
+ *
+ * Замер на книге пользователя: в «Потоком →» и «Кластерами» резерв не срабатывает
+ * никогда (0% масштаба), в «Слоями ↓» на тесном окне он прячет 11-44 узла и стоит
+ * 10-33% масштаба. Кому масштаб важнее — сворачивает легенду кнопкой ▾: свёрнутая
+ * занимает одну строку, и резерв снова обходится в 0%.
+ */
+function fitGraph(cy, pad) {
+    pad = pad || 40;
+    cy.fit(undefined, pad);
+
+    const box = $('#cy'), lg = $('#graph-legend');
+    if (!box || !lg || lg.hidden) return;
+    const B = box.getBoundingClientRect(), L = lg.getBoundingClientRect();
+    const lx2 = L.right - B.left, ly2 = L.bottom - B.top;
+    const lx1 = L.left - B.left,  ly1 = L.top - B.top;
+
+    const covered = cy.nodes().some(n => {
+        if (n.isParent()) return false;
+        const r = n.renderedBoundingBox();
+        return r.x2 > lx1 && r.x1 < lx2 && r.y2 > ly1 && r.y1 < ly2;
+    });
+    if (!covered) return;
+
+    const bb = cy.elements().boundingBox();
+    if (!(bb.w > 0 && bb.h > 0)) return;
+
+    // Легенду можно обойти двумя способами: отдать ей полосу слева или полосу
+    // сверху. Считаем оба и берём тот, где граф остаётся крупнее.
+    const variants = [
+        { x1: lx2 + pad, y1: pad,       x2: B.width - pad, y2: B.height - pad },
+        { x1: pad,       y1: ly2 + pad, x2: B.width - pad, y2: B.height - pad },
+    ];
+    let best = null;
+    for (const v of variants) {
+        const w = v.x2 - v.x1, h = v.y2 - v.y1;
+        if (w <= 0 || h <= 0) continue;
+        const z = Math.min(w / bb.w, h / bb.h);
+        if (!best || z > best.z) best = { z, v, w, h };
+    }
+    if (!best) return;
+
+    const z = Math.max(cy.minZoom(), Math.min(cy.maxZoom(), best.z));
+    cy.viewport({
+        zoom: z,
+        pan: {
+            x: best.v.x1 + best.w / 2 - z * (bb.x1 + bb.w / 2),
+            y: best.v.y1 + best.h / 2 - z * (bb.y1 + bb.h / 2),
+        },
+    });
+}
+
 /** Раскладка + упаковка одиночек + вписывание: всегда вместе, иначе разъедется. */
 function runLayout(cy, name) {
     const l = cy.layout(Object.assign({}, LAYOUTS[name], { fit: false }));
     l.run();
-    if (packOrphans(cy)) cy.fit(undefined, 40);
-    else cy.fit(undefined, (LAYOUTS[name] || {}).padding || 40);
+    if (packOrphans(cy)) fitGraph(cy, 40);
+    else fitGraph(cy, (LAYOUTS[name] || {}).padding || 40);
 }
 let currentLayout = 'dagre-lr';
 
@@ -5884,6 +6005,18 @@ function showNodeDetails(id, upSet, downSet, hosted, relUp, relDown) {
     }
 
     const nm = x => (APP.graph.index.get(x) || {}).label || x;
+    /** «g:\...\42. Запрос\ставки3.xlsx» → «ставки3.xlsx» + «…\42. Запрос». */
+    const linkLabel = t => {
+        // Резать только то, что действительно путь: у листа вида «План/Факт»
+        // один слэш, и делить его на «имя файла и папку» было бы враньём.
+        const looksPath = /^([a-zA-Z]:[\\/]|\\\\|https?:\/\/)/.test(t) || (t.match(/[\\/]/g) || []).length >= 2;
+        const m = looksPath && /^(.*)[\\/]([^\\/]+)$/.exec(t);
+        if (!m || !m[2]) return '<span class="gd-link-name">' + esc(t) + '</span>';
+        const near = m[1].split(/[\\/]/).filter(Boolean).pop() || '';
+        return '<span class="gd-link-name">' + esc(m[2]) + '</span>' +
+               '<span class="gd-link-path" title="' + esc(t) + '">' +
+               (near ? '…\\' + esc(near) : esc(m[1])) + '</span>';
+    };
     const linkList = (ids, empty, rel) => ids.size
         ? '<div class="gd-link-list">' + Array.from(ids).slice(0, 40).map(x => {
             const types = rel && rel.get(x);
@@ -5895,7 +6028,7 @@ function showNodeDetails(id, upSet, downSet, hosted, relUp, relDown) {
                 : '<span class="gd-rel gd-rel-far" title="Связь не прямая: объект достигается через цепочку">через цепочку</span>';
             return '<div class="gd-link" data-focus-node="' + esc(x) + '">' +
                 nodeGlyph((APP.graph.index.get(x) || {}).type) +
-                '<span class="gd-link-body"><span class="gd-link-name">' + esc(nm(x)) + '</span>' + badge + '</span></div>';
+                '<span class="gd-link-body" title="' + esc(nm(x)) + '">' + linkLabel(nm(x)) + badge + '</span></div>';
           }).join('') +
           (ids.size > 40 ? '<div class="muted" style="font-size:11px;padding:4px 8px">…и ещё ' + (ids.size - 40) + '</div>' : '') + '</div>'
         : '<div class="gd-empty">' + empty + '</div>';
@@ -6483,7 +6616,7 @@ function initEvents() {
     document.addEventListener('click', e => {
         if (e.target.closest('#btn-graph-defaults')) { buildTypeFilter(true); renderGraph(); }
     });
-    $('#btn-graph-fit').onclick   = () => { if (window.__cy) window.__cy.fit(undefined, 40); };
+    $('#btn-graph-fit').onclick   = () => { if (window.__cy) fitGraph(window.__cy, 40); };
     $('#btn-graph-reset').onclick = () => { clearFocus(); if (window.__cy) runLayout(window.__cy, currentLayout); };
     $('#btn-graph-png').onclick   = () => {
         if (!window.__cy) return;
