@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.6.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.6.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1444,7 +1444,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 
 const APP = {
     books: [],          // разобранные книги
@@ -4084,17 +4084,29 @@ function renderFormulas() {
         const map = new Map(refEdges.map(e => [e.source + '>' + e.target, e.count]));
         const max = Math.max.apply(null, refEdges.map(e => e.count));
 
-        let html = '<div class="matrix-box"><table class="matrix"><thead><tr><th class="corner">берёт из ↓ / отдаёт в →</th>';
-        list.forEach(c => { html += '<th class="col-h"><div class="rot">' + esc(c.label) + '</div></th>'; });
+        /* Подпись обещает «строка ссылается на колонку», но ребро 'ref' идёт
+           от поставщика к потребителю (см. построение графа), и матрица читала
+           map[строка > колонка] — то есть показывала обратное тому, что писала.
+           Сверено на книге: 202 ссылки стоят в клетке «Для расчетов» → «Модель
+           до 2030 года», хотя ссылается как раз «Модель», а «Для расчетов»
+           отдаёт. Берём ребро в нужную сторону: колонка — поставщик. */
+        let html = '<div class="matrix-box"><table class="matrix"><thead><tr>' +
+            '<th class="corner">кто берёт ↓ / у кого →</th>';
+        // title обязателен: повёрнутая подпись обрезается по высоте шапки, и без
+        // подсказки колонку не опознать. У строк и ячеек он был, у шапки — нет.
+        list.forEach(c => { html += '<th class="col-h" title="у «' + esc(c.label) + '» берут данные другие листы">' +
+            '<div class="rot">' + esc(c.label) + '</div></th>'; });
         html += '</tr></thead><tbody>';
         list.forEach(r => {
-            html += '<tr><th class="row-h" title="' + esc(r.label) + '">' + esc(r.label) + '</th>';
+            html += '<tr><th class="row-h" title="«' + esc(r.label) + '» ссылается на другие листы">' +
+                    esc(r.label) + '</th>';
             list.forEach(c => {
                 if (r.id === c.id) { html += '<td class="cell diag"></td>'; return; }
-                const n = map.get(r.id + '>' + c.id);
+                const n = map.get(c.id + '>' + r.id);
                 if (!n) { html += '<td class="cell"></td>'; return; }
                 const alpha = 0.14 + 0.72 * (Math.log10(n + 1) / Math.log10(max + 1));
-                html += '<td class="cell" data-n="' + n + '" title="' + esc(r.label) + ' → ' + esc(c.label) + ': ' + n + ' ссылок"' +
+                html += '<td class="cell" data-n="' + n + '" title="«' + esc(r.label) + '» ссылается на «' +
+                        esc(c.label) + '»: ' + plural(n, ['ссылка', 'ссылки', 'ссылок']) + '"' +
                         ' style="background:rgba(37,99,235,' + alpha.toFixed(2) + ');color:' + (alpha > 0.5 ? '#fff' : '#1e40af') + '">' + n + '</td>';
             });
             html += '</tr>';
