@@ -681,6 +681,9 @@ tr.row-link { cursor: pointer; }
     transform: translate(-50%, calc(-100% - 12px));
 }
 .cy-tip { display: flex; align-items: center; gap: 6px; }
+/* Путь к внешнему источнику не влезает в строку — единственная подсказка,
+   которой разрешено переноситься. */
+.cy-tip .tip-path { white-space: normal; max-width: 320px; line-height: 1.35; overflow-wrap: anywhere; }
 .cy-tip .edge-sample { margin-top: 0; }
 .cy-tip .tip-num { color: var(--text-muted); font-family: 'JetBrains Mono', monospace; font-size: 10.5px; margin-left: 4px; }
 /* В режиме фокуса связь на холсте перекрашена в цвет подсветки. Образец
@@ -5522,17 +5525,28 @@ function cyElements() {
     return [
         ...nodes.map(n => ({
             data: {
-                id: n.id, label: n.label, type: n.type,
+                id: n.id, type: n.type,
+                // На холсте у внешних источников подписью стоял полный путь и
+                // разворачивался в четыре строки поверх соседей. Показываем имя
+                // файла, полный путь отдаём подсказке (data.full) и панели.
+                label: (splitPath(n.label) || {}).name || n.label,
+                full: splitPath(n.label) ? n.label : '',
                 parent: groups && n.parent && present.has(n.parent) ? n.parent : undefined,
                 color: (NODE_TYPES[n.type] || {}).color || '#64748b',
-                icon: nodeIcon(n.type),
                 warn: (n.type === 'sheet' && n.ref && n.ref.errorCount > 0) ||
                       (n.type === 'name' && n.ref && n.ref.broken) ||
                       (n.type === 'extbook' && n.ref && n.ref.local) ? 1 : 0,
                 hidden: n.type === 'sheet' && n.state && n.state !== 'visible' ? 1 : 0,
             },
             classes: n.isParent ? 'parent' : '',
-        })),
+        })).map(el => {
+            // Иконку собираем после пометок: обводка вшивается в саму картинку,
+            // потому что бордюр Cytoscape умеет только прямоугольный.
+            el.data.icon = el.data.warn ? nodeIcon(el.data.type, null, '#dc2626')
+                         : el.data.hidden ? nodeIcon(el.data.type, null, '#94a3b8', true)
+                         : nodeIcon(el.data.type);
+            return el;
+        }),
         ...edges.filter(e => present.has(e.source) && present.has(e.target)).map(e => ({
             data: { id: e.id, source: e.source, target: e.target, type: e.type, count: e.count,
                     label: e.count > 1 ? String(e.count) : '' },
@@ -5724,10 +5738,10 @@ function renderGraph() {
                 'transition-property': 'opacity, border-color, outline-width, width, height, font-size',
                 'transition-duration': '220ms',
             }},
-            // Рамки идут вокруг иконки: заливки под ними больше нет, поэтому
-            // padding отодвигает рамку от силуэта, иначе она его обрезает.
-            { selector: 'node[warn = 1]',   style: { 'border-color': '#dc2626', 'border-width': 2.5, 'padding': 2 } },
-            { selector: 'node[hidden = 1]', style: { 'border-style': 'dashed', 'border-color': '#94a3b8', 'border-width': 1.5, 'padding': 2, 'opacity': .78 } },
+            // Пометки «сломано» и «скрыт» вшиты в саму иконку (см. nodeIcon):
+            // бордюр Cytoscape идёт по фигуре узла, то есть прямоугольником,
+            // и вокруг ромба или бирки выглядел как рамка, а не как обводка.
+            { selector: 'node[hidden = 1]', style: { 'opacity': .78 } },
             // Иконки квадратные, поэтому прежних поправок ширины под фигуры больше нет:
             // прямоугольный бокс просто оставил бы поля по бокам.
             { selector: 'node[type = "sheet"]',  style: { 'width': 28, 'height': 28 } },
@@ -5826,7 +5840,15 @@ function renderGraph() {
         e.addClass('edge-hl');
     });
     cy.on('mouseout', 'edge', evt => { tip.hidden = true; evt.target.removeClass('edge-hl'); });
-    // Подсказки на узлах не делаем: у них есть подпись, а клик открывает панель
+    /* Подсказка на узле — только там, где подпись укорочена. У остальных она и
+       так видна целиком, и всплывающая плашка была бы шумом. */
+    cy.on('mouseover', 'node', evt => {
+        const full = evt.target.data('full');
+        if (!full) return;
+        showTip(evt.renderedPosition || evt.target.renderedPosition(),
+            nodeGlyph(evt.target.data('type')) + '<span class="tip-path">' + esc(full) + '</span>');
+    });
+    cy.on('mouseout', 'node', () => { tip.hidden = true; });
     cy.on('pan zoom drag', () => { tip.hidden = true; });
 
     window.__cy = cy;
@@ -6027,15 +6049,11 @@ function showNodeDetails(id, upSet, downSet, hosted, relUp, relDown) {
     const nm = x => (APP.graph.index.get(x) || {}).label || x;
     /** «g:\...\42. Запрос\ставки3.xlsx» → «ставки3.xlsx» + «…\42. Запрос». */
     const linkLabel = t => {
-        // Резать только то, что действительно путь: у листа вида «План/Факт»
-        // один слэш, и делить его на «имя файла и папку» было бы враньём.
-        const looksPath = /^([a-zA-Z]:[\\/]|\\\\|https?:\/\/)/.test(t) || (t.match(/[\\/]/g) || []).length >= 2;
-        const m = looksPath && /^(.*)[\\/]([^\\/]+)$/.exec(t);
-        if (!m || !m[2]) return '<span class="gd-link-name">' + esc(t) + '</span>';
-        const near = m[1].split(/[\\/]/).filter(Boolean).pop() || '';
-        return '<span class="gd-link-name">' + esc(m[2]) + '</span>' +
+        const p = splitPath(t);
+        if (!p) return '<span class="gd-link-name">' + esc(t) + '</span>';
+        return '<span class="gd-link-name">' + esc(p.name) + '</span>' +
                '<span class="gd-link-path" title="' + esc(t) + '">' +
-               (near ? '…\\' + esc(near) : esc(m[1])) + '</span>';
+               (p.near ? '…\\' + esc(p.near) : esc(p.dir)) + '</span>';
     };
     const linkList = (ids, empty, rel) => ids.size
         ? '<div class="gd-link-list">' + Array.from(ids).slice(0, 40).map(x => {
@@ -6180,6 +6198,23 @@ const TYPE_LAYERS = [
     { id: 'out',   title: 'Аналитический слой',   types: ['pivot', 'modeltable', 'measure'] },
 ];
 
+/**
+ * Разложить подпись на имя файла и папку, если это действительно путь.
+ *
+ * Резать надо только настоящие пути: у листа вида «План/Факт» один слэш,
+ * и делить его на «файл и папку» было бы враньём. Поэтому либо явный
+ * префикс (диск, UNC, схема), либо не меньше двух разделителей.
+ *
+ * @returns {{name: string, dir: string, near: string}|null}
+ */
+function splitPath(t) {
+    if (!t) return null;
+    const looksPath = /^([a-zA-Z]:[\\/]|\\\\|https?:\/\/)/.test(t) || (t.match(/[\\/]/g) || []).length >= 2;
+    const m = looksPath && /^(.*)[\\/]([^\\/]+)$/.exec(t);
+    if (!m || !m[2]) return null;
+    return { name: m[2], dir: m[1], near: m[1].split(/[\\/]/).filter(Boolean).pop() || '' };
+}
+
 /* ═══════════════ ИКОНКИ ТИПОВ ОБЪЕКТОВ ═══════════════
    Сплошные силуэты вместо геометрических фигур: цвет остаётся заливкой, но
    форма теперь говорит, что это за объект. Замер на узле 16×13 px (масштаб
@@ -6237,14 +6272,40 @@ const ICONS = {
   measure: '<path d="M5 3H19V6.2H10.4L16 12L10.4 17.8H19V21H5V18.6L11.8 12L5 5.4Z"/>',
 };
 
-/** Иконка типа как data-URI. width/height обязательны: у SVG с одним viewBox
- *  Chromium считает натуральный размер нулевым, и Cytoscape рисует точку. */
-function nodeIcon(type, color) {
+/**
+ * Обводка по силуэту, а не рамка вокруг узла.
+ *
+ * Cytoscape умеет рисовать бордюр только по фигуре узла, а узел под иконкой —
+ * прямоугольник: поэтому пометка «сломано» и получалась красным квадратом.
+ * Обводим сам силуэт: берём первый path иконки (он всегда основной, белые
+ * прорези идут следом) и подкладываем его копию, обведённую цветом пометки.
+ * Заливка рисуется поверх, так что наружу выходит ровно половина штриха.
+ */
+function iconOutline(body, color, dash) {
+    const m = /d="([^"]+)"/.exec(body);
+    if (!m) return '';
+    return '<path d="' + m[1] + '" fill="none" stroke="' + color + '" stroke-width="2.6" ' +
+           'stroke-linejoin="round"' + (dash ? ' stroke-dasharray="3 2.4"' : '') + '/>';
+}
+
+/**
+ * Иконка типа как data-URI.
+ *
+ * width/height обязательны: у SVG с одним viewBox Chromium считает натуральный
+ * размер нулевым, и Cytoscape рисует точку вместо картинки. viewBox с полями
+ * (-2 … 28) нужен, чтобы обводка пометки не срезалась краем: без полей ромб
+ * сводной и бирка имени упираются в границу.
+ *
+ * @param ring — цвет пометки («сломано», «скрыт») или null
+ * @param dash — пунктирная обводка: так помечается скрытый лист
+ */
+function nodeIcon(type, color, ring, dash) {
     const body = ICONS[type];
     if (!body) return '';
+    const fill = color || (NODE_TYPES[type] || {}).color || '#64748b';
     return 'data:image/svg+xml;utf8,' + encodeURIComponent(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="' +
-        (color || (NODE_TYPES[type] || {}).color || '#64748b') + '">' + body + '</svg>');
+        '<svg xmlns="http://www.w3.org/2000/svg" width="112" height="112" viewBox="-2 -2 28 28" fill="' +
+        fill + '">' + (ring ? iconOutline(body, ring, dash) : '') + body + '</svg>');
 }
 
 /**
@@ -6253,19 +6314,16 @@ function nodeIcon(type, color) {
  * интерфейс и холст берут картинку из одного набора и разойтись не могут.
  *
  * @param color — явный цвет или 'currentColor', чтобы им управлял CSS.
- * @param ring  — цвет рамки-пометки. На графе «сломано» рисуется рамкой
- *                вокруг иконки, поэтому и здесь это рамка, а не обводка
- *                силуэта: легенда показывает ровно то, что на холсте.
+ * @param ring  — цвет пометки. Обводка идёт по силуэту тем же кодом, что и
+ *                на холсте (iconOutline), поэтому легенда показывает буквально
+ *                то, что нарисовано на графе, а не похожую картинку.
  */
-function nodeGlyph(type, color, ring) {
+function nodeGlyph(type, color, ring, dash) {
     const meta = NODE_TYPES[type] || {};
     const body = ICONS[type] || NODE_GLYPHS_FALLBACK;
-    const frame = ring
-        ? '<rect x="1.2" y="1.2" width="21.6" height="21.6" rx="4" fill="none" stroke="' +
-          ring + '" stroke-width="2.2"/>'
-        : '';
-    return '<svg class="node-glyph" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" ' +
-        'fill="' + (color || meta.color || '#94a3b8') + '">' + body + frame + '</svg>';
+    return '<svg class="node-glyph" width="15" height="15" viewBox="-2 -2 28 28" aria-hidden="true" ' +
+        'fill="' + (color || meta.color || '#94a3b8') + '">' +
+        (ring ? iconOutline(body, ring, dash) : '') + body + '</svg>';
 }
 /* Запасной силуэт: типы вроде «Книги» на графе — контейнеры, своей иконки
    у них нет, но звать nodeGlyph для них никто не запрещает. */
