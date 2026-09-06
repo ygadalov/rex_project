@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.5.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.5.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -68,7 +68,7 @@
 
     /* Палитра узлов графа = роль в потоке данных.
        Один цвет = один смысл, повторяется во всех вкладках (легенда, таблицы, граф). */
-    --n-source:   #0d9488;   /* внешний источник: БД, файл, папка, web   */
+    --n-source:   #115e59;   /* внешний источник: БД, файл, папка, web   */
     --n-query:    #7c3aed;   /* запрос Power Query                        */
     --n-table:    #059669;   /* умная таблица (ListObject)                */
     --n-sheet:    #2563eb;   /* лист                                      */
@@ -139,11 +139,14 @@ body {
 }
 .nav-badge.warn { background: rgba(245,158,11,.2); color: #fbbf24; }
 .nav-badge.bad  { background: rgba(239,68,68,.2);  color: #f87171; }
-/* Строка целиком в одну не влезает: сайдбар 260 px, доступно 211, а текст просит
-   246 даже на 10px. Поэтому переносим осознанно — по разделителю, а не посреди
-   «AI-Augmented», как это делал браузер сам. */
-.sidebar-footer { padding: 14px 24px; border-top: 1px solid rgba(255,255,255,.06); font-size: 11px; color: #94a3b8; line-height: 1.5; }
-.sidebar-footer span { white-space: nowrap; }
+/* Одна строка. Кегль не константа: Manrope грузится из сети, и при откате на
+   системный шрифт ширина строки уезжает на десяток пикселей — подбираем размер
+   в рантайме (fitSidebarFooter), иначе строка либо переносится, либо мельчит зря. */
+.sidebar-footer { padding: 14px 16px; border-top: 1px solid rgba(255,255,255,.06); color: #94a3b8; line-height: 1.5; }
+/* inline-block, а не block: у блочного элемента ширина равна контейнеру, и
+   подбор кегля мерил бы коробку вместо текста. */
+.sidebar-footer .sf-line { display: inline-block; white-space: nowrap; font-size: 11px; }
+.sidebar-footer b { color: #60a5fa; font-weight: 700; }
 .sidebar-collapse-btn {
     display: none; background: none; border: none; color: #64748b; cursor: pointer;
     padding: 5px; border-radius: 6px; transition: color .15s, background .15s;
@@ -980,7 +983,7 @@ table.matrix td.cell[data-n] { cursor: default; }
     </nav>
 
     <div class="sidebar-footer">
-        <span>Powered by Gadalov BI |</span> <span>AI-Augmented Solutions</span>
+        <span class="sf-line" id="sidebar-brand">Powered by <b>Gadalov BI</b> | AI-Augmented Solutions</span>
     </div>
 </aside>
 
@@ -1436,7 +1439,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 
 const APP = {
     books: [],          // разобранные книги
@@ -2899,7 +2902,11 @@ function buildFromSheetJS(wb, book) {
 
 const NODE_TYPES = {
     book:    { label: 'Книга',              short: 'Книга',    color: '#0f172a', shape: 'round-rectangle' },
-    source:  { label: 'Внешний источник',   short: 'Источник', color: '#0d9488', shape: 'barrel' },
+    // teal-800 вместо teal-600: от «Умной таблицы» #059669 старый цвет отстоял
+    // всего на ΔE 10.5 и читался как её оттенок. Новый даёт 22.7 и при этом
+    // остаётся далеко и от красной рамки «сломано» (53.5), и от жёлтых имён (53) —
+    // тёплые кандидаты (амбра, охра) выигрывали у зелени, но подходили к красному.
+    source:  { label: 'Внешний источник',   short: 'Источник', color: '#115e59', shape: 'barrel' },
     extbook: { label: 'Внешняя книга',      short: 'Книга',    color: '#64748b', shape: 'cut-rectangle' },
     query:   { label: 'Запрос Power Query', short: 'Запрос',   color: '#7c3aed', shape: 'round-rectangle' },
     table:   { label: 'Умная таблица',      short: 'Таблица',  color: '#059669', shape: 'rectangle' },
@@ -2926,7 +2933,7 @@ const NODE_TYPES = {
 const EDGE_TYPES = {
     ref:       { label: 'Ссылка формулы',   color: '#64748b', dash: 'solid',  arrow: true,
                  hint: 'Формула на одном объекте читает данные с другого. Самая надёжная связь: она прямо записана в ячейке.' },
-    src:       { label: 'Внешний источник', color: '#0d9488', dash: 'dashed', arrow: true,
+    src:       { label: 'Внешний источник', color: '#115e59', dash: 'dashed', arrow: true,
                  hint: 'Запрос Power Query забирает данные снаружи книги: файл, папка, база, web.' },
     feed:      { label: 'Запрос → запрос',  color: '#a78bfa', dash: 'dashed', arrow: true,
                  hint: 'Один запрос Power Query использует результат другого.' },
@@ -6762,6 +6769,31 @@ function initEvents() {
 }
 
 /* ─── старт ─── */
+/**
+ * Подпись проекта должна лежать в одну строку. Ширина сайдбара фиксирована (260 px),
+ * а ширина строки зависит от того, доехал ли Manrope: на системном шрифте она
+ * отличается на десяток пикселей. Поэтому подбираем кегль по факту, а не константой,
+ * и повторяем после загрузки шрифтов — иначе первый расчёт был бы по подменному.
+ */
+function fitSidebarFooter() {
+    const line = $('#sidebar-brand');
+    if (!line) return;
+    const box = line.parentElement, cs = getComputedStyle(box);
+    const avail = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    if (avail <= 0) return;
+    let fs = 11;
+    line.style.fontSize = fs + 'px';
+    // Запас 2 px: без него строка встаёт вплотную к отступу, и субпиксельное
+    // округление в другом браузере может её уронить на вторую строку.
+    while (line.getBoundingClientRect().width > avail - 2 && fs > 7.5) {
+        fs -= 0.25;
+        line.style.fontSize = fs + 'px';
+    }
+}
+fitSidebarFooter();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSidebarFooter);
+window.addEventListener('resize', fitSidebarFooter);
+
 $('#sidebar-version').textContent = 'v' + APP_VERSION;
 renderCapabilities();
 initEvents();
