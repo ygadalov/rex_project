@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.5.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.6.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -953,7 +953,9 @@ table.matrix td.cell[data-n] { cursor: default; }
             <span class="nav-label">Формулы и ссылки</span>
         </button>
         <button class="nav-item" data-page="pq" role="tab" aria-selected="false" aria-controls="page-pq" disabled>
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v13c0 1.7 3.6 3 8 3s8-1.3 8-3v-13"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span>
+            <!-- Шестерёнка, а не цилиндр: цилиндр — это хранилище, он ушёл к
+                 «Внешнему источнику» на графе. Запрос — обработка. -->
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none" data-gear="1"></svg></span>
             <span class="nav-label">Power Query</span>
             <span class="nav-badge" id="badge-pq" hidden></span>
         </button>
@@ -1439,7 +1441,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.6.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -2901,25 +2903,25 @@ function buildFromSheetJS(wb, book) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const NODE_TYPES = {
-    book:    { label: 'Книга',              short: 'Книга',    color: '#0f172a', shape: 'round-rectangle' },
+    book:    { label: 'Книга',              short: 'Книга',    color: '#0f172a' },
     // teal-800 вместо teal-600: от «Умной таблицы» #059669 старый цвет отстоял
     // всего на ΔE 10.5 и читался как её оттенок. Новый даёт 22.7 и при этом
     // остаётся далеко и от красной рамки «сломано» (53.5), и от жёлтых имён (53) —
     // тёплые кандидаты (амбра, охра) выигрывали у зелени, но подходили к красному.
-    source:  { label: 'Внешний источник',   short: 'Источник', color: '#115e59', shape: 'barrel' },
-    extbook: { label: 'Внешняя книга',      short: 'Книга',    color: '#64748b', shape: 'cut-rectangle' },
-    query:   { label: 'Запрос Power Query', short: 'Запрос',   color: '#7c3aed', shape: 'round-rectangle' },
-    table:   { label: 'Умная таблица',      short: 'Таблица',  color: '#059669', shape: 'rectangle' },
-    sheet:   { label: 'Лист',               short: 'Лист',     color: '#2563eb', shape: 'round-rectangle' },
+    source:  { label: 'Внешний источник',   short: 'Источник', color: '#115e59' },
+    extbook: { label: 'Внешняя книга',      short: 'Книга',    color: '#64748b' },
+    query:   { label: 'Запрос Power Query', short: 'Запрос',   color: '#7c3aed' },
+    table:   { label: 'Умная таблица',      short: 'Таблица',  color: '#059669' },
+    sheet:   { label: 'Лист',               short: 'Лист',     color: '#2563eb' },
     // Жёлтый. Оранжевый сливался с красной рамкой «имя сломано», оливковый и
     // охра рядом с ней выглядели грязно. Чистый жёлтый максимально далёк от
     // красного по светлоте — рамка читается как отдельный сигнал, а не как
     // продолжение заливки. Расплата: силуэт 14×12 px в легенде бледнее, чем
     // у остальных типов, поэтому текст подписей рисуется своим цветом.
-    name:    { label: 'Именованный диапазон', short: 'Имя',    color: '#eab308', shape: 'tag' },
-    pivot:   { label: 'Сводная таблица',    short: 'Сводная',  color: '#db2777', shape: 'diamond' },
-    modeltable: { label: 'Таблица модели',  short: 'Табл. модели', color: '#0891b2', shape: 'octagon' },
-    measure: { label: 'Мера модели',        short: 'Мера',     color: '#4f46e5', shape: 'hexagon' },
+    name:    { label: 'Именованный диапазон', short: 'Имя',    color: '#eab308' },
+    pivot:   { label: 'Сводная таблица',    short: 'Сводная',  color: '#db2777' },
+    modeltable: { label: 'Таблица модели',  short: 'Табл. модели', color: '#0891b2' },
+    measure: { label: 'Мера модели',        short: 'Мера',     color: '#4f46e5' },
 };
 
 /**
@@ -5523,7 +5525,7 @@ function cyElements() {
                 id: n.id, label: n.label, type: n.type,
                 parent: groups && n.parent && present.has(n.parent) ? n.parent : undefined,
                 color: (NODE_TYPES[n.type] || {}).color || '#64748b',
-                shape: (NODE_TYPES[n.type] || {}).shape || 'ellipse',
+                icon: nodeIcon(n.type),
                 warn: (n.type === 'sheet' && n.ref && n.ref.errorCount > 0) ||
                       (n.type === 'name' && n.ref && n.ref.broken) ||
                       (n.type === 'extbook' && n.ref && n.ref.local) ? 1 : 0,
@@ -5706,21 +5708,30 @@ function renderGraph() {
         wheelSensitivity: 0.25,
         style: [
             { selector: 'node', style: {
-                'background-color': 'data(color)', 'shape': 'data(shape)',
+                // Узел — прозрачный квадрат, вся картинка в background-image.
+                // shape нужен только под рамки: «сломано», «скрыт», выделение.
+                'background-color': 'data(color)', 'background-opacity': 0,
+                'background-image': 'data(icon)', 'background-fit': 'contain',
+                'background-width': '100%', 'background-height': '100%',
+                'shape': 'round-rectangle',
                 'label': 'data(label)', 'color': '#0f172a',
                 'font-family': 'Manrope, sans-serif', 'font-size': 11, 'font-weight': 600,
                 'text-valign': 'bottom', 'text-margin-y': 5, 'text-wrap': 'ellipsis',
                 'text-max-width': 116, 'width': 26, 'height': 26,
-                'border-width': 2, 'border-color': '#fff',
+                'border-width': 0, 'border-color': '#fff',
                 'text-background-color': '#fff', 'text-background-opacity': .8,
                 'text-background-padding': 2, 'text-background-shape': 'roundrectangle',
                 'transition-property': 'opacity, border-color, outline-width, width, height, font-size',
                 'transition-duration': '220ms',
             }},
-            { selector: 'node[warn = 1]',   style: { 'border-color': '#dc2626', 'border-width': 3 } },
-            { selector: 'node[hidden = 1]', style: { 'border-style': 'dashed', 'border-color': '#94a3b8', 'opacity': .78 } },
-            { selector: 'node[type = "sheet"]',  style: { 'width': 34, 'height': 26 } },
-            { selector: 'node[type = "source"]', style: { 'width': 30, 'height': 30 } },
+            // Рамки идут вокруг иконки: заливки под ними больше нет, поэтому
+            // padding отодвигает рамку от силуэта, иначе она его обрезает.
+            { selector: 'node[warn = 1]',   style: { 'border-color': '#dc2626', 'border-width': 2.5, 'padding': 2 } },
+            { selector: 'node[hidden = 1]', style: { 'border-style': 'dashed', 'border-color': '#94a3b8', 'border-width': 1.5, 'padding': 2, 'opacity': .78 } },
+            // Иконки квадратные, поэтому прежних поправок ширины под фигуры больше нет:
+            // прямоугольный бокс просто оставил бы поля по бокам.
+            { selector: 'node[type = "sheet"]',  style: { 'width': 28, 'height': 28 } },
+            { selector: 'node[type = "source"]', style: { 'width': 28, 'height': 28 } },
             { selector: 'node.parent', style: {
                 'background-color': '#f1f5f9', 'background-opacity': .55, 'border-color': '#cbd5e1',
                 'border-width': 1.5, 'shape': 'round-rectangle', 'text-valign': 'top',
@@ -5753,11 +5764,14 @@ function renderGraph() {
             // Выбранный узел — центр разбора, поэтому он крупнее всего остального
             // примерно вдвое. Размер не спорит с цветом связей: это другой канал.
             { selector: '.hl-node', style: {
-                // Двойное кольцо: белый бордюр + тёмный контур снаружи.
-                // Заливки нет — она перекрывала соседей и читалась как чёрный блок.
-                'border-color': '#ffffff', 'border-width': 3,
-                'outline-width': 3, 'outline-color': '#0f172a', 'outline-opacity': 1, 'outline-offset': 0,
-                'width': 44, 'height': 36, 'z-index': 40,
+                // Раньше это было двойное кольцо по краю заливки. Заливки больше
+                // нет, поэтому выбранный узел — белая карточка с тёмной рамкой:
+                // иконка остаётся цветной и читаемой, а карточка отделяет её от
+                // проходящих под ней связей.
+                'background-color': '#ffffff', 'background-opacity': 1,
+                'border-color': '#0f172a', 'border-width': 2.5, 'padding': 4,
+                'outline-width': 3, 'outline-color': '#ffffff', 'outline-opacity': 1, 'outline-offset': 0,
+                'width': 44, 'height': 44, 'z-index': 40,
                 'font-size': 12.5, 'font-weight': 800, 'color': '#0f172a',
                 // Подпись без рамки: рамка вокруг текста читалась как ещё один
                 // элемент схемы. Достаточно светлой подложки. Имя переносится
@@ -5768,10 +5782,9 @@ function renderGraph() {
             } },
             // Прямые соседи — второй уровень: заметно крупнее фона, но меньше центра.
             { selector: 'node.hl-near', style: {
-                'width': 32, 'height': 28, 'z-index': 25, 'font-weight': 700,
+                'width': 34, 'height': 34, 'z-index': 25, 'font-weight': 700,
                 'text-wrap': 'wrap', 'text-max-width': 150, 'line-height': 1.2,
             } },
-            { selector: 'node.hl-near[type = "sheet"]', style: { 'width': 38, 'height': 30 } },
             // Пока выбран объект, цвет линии означает НАПРАВЛЕНИЕ, а не тип.
             // Это допустимо только потому, что легенда в этот момент переключается
             // и говорит об этом прямо. Полупрозрачные ореолы на десятках линий
@@ -6167,30 +6180,96 @@ const TYPE_LAYERS = [
     { id: 'out',   title: 'Аналитический слой',   types: ['pivot', 'modeltable', 'measure'] },
 ];
 
-const NODE_GLYPHS = {
-    'round-rectangle': '<rect x="1" y="2" width="12" height="8" rx="2.5"/>',
-    'rectangle':       '<rect x="1" y="2" width="12" height="8"/>',
-    'cut-rectangle':   '<polygon points="3,2 11,2 13,4 13,8 11,10 3,10 1,8 1,4"/>',
-    'barrel':          '<path d="M3.4 2h7.2c1.6 1.2 1.6 6.8 0 8H3.4c-1.6-1.2-1.6-6.8 0-8z"/>',
-    'diamond':         '<polygon points="7,1 13,6 7,11 1,6"/>',
-    'hexagon':         '<polygon points="4,1.5 10,1.5 13,6 10,10.5 4,10.5 1,6"/>',
-    'octagon':         '<polygon points="4.5,1.5 9.5,1.5 13,4.5 13,7.5 9.5,10.5 4.5,10.5 1,7.5 1,4.5"/>',
-    'tag':             '<polygon points="1,2 9,2 13,6 9,10 1,10"/>',
-    'ellipse':         '<ellipse cx="7" cy="6" rx="6" ry="4"/>',
+/* ═══════════════ ИКОНКИ ТИПОВ ОБЪЕКТОВ ═══════════════
+   Сплошные силуэты вместо геометрических фигур: цвет остаётся заливкой, но
+   форма теперь говорит, что это за объект. Замер на узле 16×13 px (масштаб
+   «Вписать»): худшая пара по различимости 17.6 → 23.6, средний контраст
+   силуэтов 0.227 → 0.355, и исчезла пара с полностью одинаковым силуэтом
+   (Лист и Запрос были оба round-rectangle). Расплата — заливки на треть
+   меньше, граф в целом легче.
+
+   Набор согласован с иконками бокового меню:
+   — «Листы и таблицы» в меню — сетка, поэтому Лист на графе тоже сетка,
+     а Умная таблица — сетка с залитой шапкой;
+   — цилиндр в меню стоял у Power Query, хотя цилиндр — это хранилище:
+     цилиндр отдан Внешнему источнику, Запросу и пункту меню — шестерёнка;
+   — Σ у Меры модели повторяет Σ у «Формул и ссылок»: в обоих местах это
+     «здесь считают», типа «формула» на графе нет, спутать не с чем;
+   — ромб у Сводной — буквально повёрнутый квадрат, то есть pivot. */
+
+function gearPath(cx, cy, rOut, rIn, teeth, hole) {
+    const step = Math.PI / teeth, pts = [];
+    for (let i = 0; i < teeth * 2; i++) {
+        const r = i % 2 ? rIn : rOut, a0 = i * step - step * 0.36, a1 = i * step + step * 0.36;
+        pts.push([cx + r * Math.cos(a0), cy + r * Math.sin(a0)]);
+        pts.push([cx + r * Math.cos(a1), cy + r * Math.sin(a1)]);
+    }
+    const h = [];
+    for (let i = 0; i < 24; i++) { const a = -i / 24 * 2 * Math.PI; h.push([cx + hole * Math.cos(a), cy + hole * Math.sin(a)]); }
+    return 'M' + pts.map(p => p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join('L') + 'Z'
+         + 'M' + h.map(p => p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join('L') + 'Z';
+}
+
+const ICON_W = '#fff';   // белым режем прорези внутри силуэта
+const ICONS = {
+  // лист — та же сетка, что у «Листов и таблиц» в меню
+  sheet:   '<path d="M2.5 3h19v18h-19z"/><path d="M2.5 9h19M2.5 15h19M8.5 3v18" stroke="'+ICON_W+'" stroke-width="1.7" fill="none"/>',
+  // умная таблица — сетка с залитой шапкой: таблица, у которой есть заголовки
+  table:   '<path d="M2.5 3h19v18h-19z"/><path d="M2.5 9h19M9 9v12M15.5 9v12" stroke="'+ICON_W+'" stroke-width="1.7" fill="none"/>',
+  // запрос PQ — шестерёнка: обработка, а не фильтр и не хранилище
+  query:   '<path fill-rule="evenodd" d="' + gearPath(12, 12, 11, 8.2, 8, 3.9) + '"/>',
+  // внешний источник — цилиндр хранилища
+  // Цилиндр: верхняя крышка и ровно три полосы одинаковой высоты. Низ закрыт
+  // сплошной дугой — белый разделитель у самого нижнего обвода сливался с фоном.
+  source:  '<path d="M12 2.9c4.42 0 8 1.16 8 2.6v13c0 1.44-3.58 2.6-8 2.6s-8-1.16-8-2.6v-13c0-1.44 3.58-2.6 8-2.6"/>' +
+           '<path d="M4 5.5c0 1.44 3.58 2.6 8 2.6s8-1.16 8-2.6M4 9.83c0 1.44 3.58 2.6 8 2.6s8-1.16 8-2.6' +
+           'M4 14.17c0 1.44 3.58 2.6 8 2.6s8-1.16 8-2.6" stroke="'+ICON_W+'" stroke-width="1.6" fill="none"/>',
+  // внешняя книга — две страницы уступом
+  extbook: '<path d="M5 2h9l5 5v15H5z"/><path d="M14 2v5h5" fill="'+ICON_W+'" fill-opacity=".45"/>' +
+           '<path d="M8.5 15.5h6M12 12.5l3.2 3-3.2 3" stroke="'+ICON_W+'" stroke-width="1.8" fill="none"/>',
+  // именованный диапазон — вытянутый пятиугольник, как сейчас
+  name:    '<path d="M2 5h13l6.5 7-6.5 7H2z"/><circle cx="6.5" cy="12" r="1.9" fill="'+ICON_W+'" fill-opacity=".55"/>',
+  // сводная — ромб с крестом: силуэт ромба сохраняем, он самый узнаваемый на мелком
+  pivot:   '<path d="M12 1.5 22.5 12 12 22.5 1.5 12z"/><path d="M12 4.5v15M4.5 12h15" stroke="'+ICON_W+'" stroke-width="1.7" fill="none"/>',
+  // таблица модели — куб
+  modeltable:'<path d="M12 1.8 21.5 7v10L12 22.2 2.5 17V7z"/><path d="M2.5 7 12 12.3 21.5 7M12 12.3V22" stroke="'+ICON_W+'" stroke-width="1.5" fill="none"/>',
+  // мера модели — сигма
+  measure: '<path d="M5 3H19V6.2H10.4L16 12L10.4 17.8H19V21H5V18.6L11.8 12L5 5.4Z"/>',
 };
 
-/** @param color — явный цвет или 'currentColor', чтобы им управлял CSS. */
+/** Иконка типа как data-URI. width/height обязательны: у SVG с одним viewBox
+ *  Chromium считает натуральный размер нулевым, и Cytoscape рисует точку. */
+function nodeIcon(type, color) {
+    const body = ICONS[type];
+    if (!body) return '';
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="' +
+        (color || (NODE_TYPES[type] || {}).color || '#64748b') + '">' + body + '</svg>');
+}
+
+/**
+ * Значок типа для легенды, чипов, панели деталей и поиска — та же иконка,
+ * что и на графе. Раньше здесь рисовался цветной силуэт фигуры; теперь
+ * интерфейс и холст берут картинку из одного набора и разойтись не могут.
+ *
+ * @param color — явный цвет или 'currentColor', чтобы им управлял CSS.
+ * @param ring  — цвет рамки-пометки. На графе «сломано» рисуется рамкой
+ *                вокруг иконки, поэтому и здесь это рамка, а не обводка
+ *                силуэта: легенда показывает ровно то, что на холсте.
+ */
 function nodeGlyph(type, color, ring) {
     const meta = NODE_TYPES[type] || {};
-    const shape = NODE_GLYPHS[meta.shape] || NODE_GLYPHS['round-rectangle'];
-    // Кольцо рисуем той же фигурой поверх заливки: так пометка на графе и в
-    // легенде — это буквально один и тот же силуэт, а не «похожая картинка».
-    const stroke = ring
-        ? ' stroke="' + ring + '" stroke-width="2" paint-order="stroke" stroke-linejoin="round"'
+    const body = ICONS[type] || NODE_GLYPHS_FALLBACK;
+    const frame = ring
+        ? '<rect x="1.2" y="1.2" width="21.6" height="21.6" rx="4" fill="none" stroke="' +
+          ring + '" stroke-width="2.2"/>'
         : '';
-    return '<svg class="node-glyph" width="14" height="12" viewBox="0 0 14 12" aria-hidden="true" ' +
-        'fill="' + (color || meta.color || '#94a3b8') + '"' + stroke + '>' + shape + '</svg>';
+    return '<svg class="node-glyph" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" ' +
+        'fill="' + (color || meta.color || '#94a3b8') + '">' + body + frame + '</svg>';
 }
+/* Запасной силуэт: типы вроде «Книги» на графе — контейнеры, своей иконки
+   у них нет, но звать nodeGlyph для них никто не запрещает. */
+const NODE_GLYPHS_FALLBACK = '<rect x="3" y="4" width="18" height="16" rx="3"/>';
 
 /**
  * Образец связи для легенды и подсказки.
@@ -6769,6 +6848,10 @@ function initEvents() {
 }
 
 /* ─── старт ─── */
+// Шестерёнку в меню рисует тот же генератор, что и иконку запроса на графе:
+// две разные картинки для одного смысла разъехались бы при первой же правке.
+document.querySelectorAll('svg[data-gear]').forEach(el => { el.innerHTML = ICONS.query; });
+
 /**
  * Подпись проекта должна лежать в одну строку. Ширина сайдбара фиксирована (260 px),
  * а ширина строки зависит от того, доехал ли Manrope: на системном шрифте она
