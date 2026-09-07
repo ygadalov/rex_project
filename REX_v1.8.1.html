@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.8.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.8.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -44,6 +44,16 @@
   Грузится лениво (см. ensureSheetJS) — тем, кто открывает только .xlsx, платить не за что.
 -->
 
+<!-- Значок вкладки. SVG — основной: 2 КБ, чёткий на любой плотности экрана.
+     PNG 32×32 — запасной для браузеров без поддержки SVG-иконок (Safari до 16).
+     apple-touch-icon намеренно не кладём: он весит 11.5 КБ, а инструмент
+     открывают из файла в браузере, а не с домашнего экрана.
+     Знак утолщён (обводка 45 единиц) — тонкий контур логотипа на 16 px
+     исчезает; замерено на всех размерах от 16 до 64.
+     width/height у SVG заданы явно: без них натуральный размер картинки
+     остаётся на усмотрение браузера (Chromium отдавал 150×150). -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231e3a5f'/%3E%3Cg transform='translate(-40.497,-34.886) scale(0.17425)' fill='%23ffffff'%3E%3Cg stroke='%23ffffff' stroke-width='45' stroke-linejoin='round' transform='translate(0,768) scale(0.1,-0.1)'%3E%3Cpath d='M4385 5184 c-195 -19 -346 -48 -493 -94 -75 -23 -118 -44 -192 -94 -212 -144 -233 -170 -259 -311 -6 -33 -19 -71 -28 -84 -10 -12 -126 -81 -258 -153 -282 -152 -441 -243 -473 -272 -62 -55 -67 -120 -17 -221 30 -60 38 -95 61 -245 14 -96 32 -204 40 -240 40 -177 155 -265 359 -277 77 -4 100 -10 161 -40 93 -46 194 -61 301 -46 43 6 81 9 86 6 13 -8 55 -97 76 -164 31 -98 51 -231 51 -345 l0 -104 55 0 55 0 0 118 c0 193 -38 367 -109 498 l-29 54 37 22 c46 28 181 157 181 174 0 14 -56 64 -72 64 -5 0 -36 -26 -68 -59 -75 -76 -167 -128 -265 -148 -189 -38 -341 50 -530 310 -38 53 -75 98 -82 101 -6 3 -28 2 -47 -1 -27 -4 -36 -11 -36 -25 0 -40 76 -157 169 -261 19 -21 32 -39 30 -41 -2 -2 -32 5 -66 15 -71 22 -113 64 -138 139 -12 36 -43 219 -58 334 -1 15 9 22 47 33 90 26 206 176 209 267 1 46 -30 80 -89 96 -25 7 -41 16 -37 20 4 4 114 65 243 135 129 70 250 138 268 151 44 34 72 92 87 183 12 69 17 79 54 113 69 61 213 154 273 176 133 50 319 86 519 102 107 8 135 7 180 -6 97 -28 170 -75 260 -164 71 -70 94 -102 128 -173 56 -114 53 -128 -19 -83 -63 40 -85 44 -100 17 -18 -35 -12 -68 18 -87 159 -104 229 -233 266 -494 8 -58 38 -271 67 -474 59 -413 59 -440 3 -554 -52 -107 -296 -323 -458 -407 -111 -57 -197 -46 -270 36 -112 123 -170 369 -146 611 14 143 37 248 111 512 75 267 101 408 101 551 0 115 -22 250 -45 272 -9 10 -21 10 -49 2 -21 -5 -40 -14 -43 -18 -3 -5 2 -41 10 -81 33 -156 15 -350 -56 -605 -115 -409 -137 -514 -146 -690 -15 -313 92 -602 261 -700 158 -91 324 -32 611 216 199 172 275 307 275 487 0 31 -26 238 -59 460 -32 222 -54 399 -50 395 4 -4 69 -129 145 -278 198 -392 201 -397 227 -389 35 10 67 33 67 48 0 8 -121 252 -269 542 -195 382 -277 554 -297 619 -14 50 -38 113 -51 140 -85 169 -237 310 -415 383 -63 26 -171 36 -273 26z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E">
+<link rel="alternate icon" type="image/png" sizes="32x32" href="data:image/png;base64,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">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
 <style>
@@ -1485,7 +1495,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 
 const APP = {
     books: [],          // разобранные книги
