@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.7.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.7.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -56,7 +56,21 @@
     --danger:  #ef4444;  --danger-light:  #fee2e2;
     --purple:  #7c3aed;  --purple-dark:   #6d28d9;
 
+    /* Все цвета меню — токены, включая текст и разделители. Раньше половина была
+       вписана прямо в правила, и сменить тему меню на светлую было нельзя:
+       #e2e8f0 на белом фоне не читается. */
     --sidebar-bg: #0f172a;  --sidebar-hover: #1e293b;  --sidebar-active: #334155;
+    --sidebar-text: #e2e8f0;      /* обычный текст пункта                       */
+    --sidebar-strong: #f8fafc;    /* шапка меню                                 */
+    --sidebar-muted: #94a3b8;     /* неактивный пункт, подпись проекта          */
+    --sidebar-line: rgba(255,255,255,.06);   /* разделители                     */
+    --sidebar-edge: rgba(255,255,255,.05);   /* правая граница меню             */
+    --sidebar-accent: #60a5fa;    /* активный пункт, бейджи, акцент             */
+    --sidebar-accent-bar: #3b82f6;/* полоса слева у активного пункта            */
+    --sidebar-accent-bg: rgba(59,130,246,.1);   /* фон активного пункта         */
+    --sidebar-badge-bg: rgba(59,130,246,.2);    /* фон бейджа                   */
+    --sidebar-warn: #fbbf24;  --sidebar-warn-bg: rgba(245,158,11,.2);
+    --sidebar-bad:  #f87171;  --sidebar-bad-bg:  rgba(239,68,68,.2);
     --bg: #f1f5f9;  --card: #ffffff;
     --text: #0f172a;  --text-secondary: #64748b;  --text-muted: #6b7280;
     --border: #e2e8f0;  --border-light: #f1f5f9;
@@ -95,15 +109,15 @@ body {
 
 /* ═══════════════════ SIDEBAR ═══════════════════ */
 .sidebar {
-    width: var(--sidebar-w); background: var(--sidebar-bg); color: #e2e8f0;
+    width: var(--sidebar-w); background: var(--sidebar-bg); color: var(--sidebar-text);
     display: flex; flex-direction: column; position: fixed; height: 100vh; z-index: 1000;
     transition: transform .3s cubic-bezier(.4,0,.2,1), width .3s cubic-bezier(.4,0,.2,1);
-    border-right: 1px solid rgba(255,255,255,.05);
+    border-right: 1px solid var(--sidebar-edge);
 }
 .sidebar-header {
     padding: 20px 24px; font-size: 13px; font-weight: 700; letter-spacing: 2px;
-    text-transform: uppercase; border-bottom: 1px solid rgba(255,255,255,.06);
-    display: flex; justify-content: space-between; align-items: center; color: #f8fafc;
+    text-transform: uppercase; border-bottom: 1px solid var(--sidebar-line);
+    display: flex; justify-content: space-between; align-items: center; color: var(--sidebar-strong);
 }
 .sidebar-header .brand-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .sidebar-header .brand {
@@ -116,42 +130,42 @@ body {
 .sidebar-header .ver-badge {
     font-size: 10px; font-weight: 700; letter-spacing: 0; text-transform: none;
     padding: 3px 7px; border-radius: 6px;
-    background: rgba(59,130,246,.2); color: #60a5fa; flex-shrink: 0;
+    background: var(--sidebar-badge-bg); color: var(--sidebar-accent); flex-shrink: 0;
 }
 .nav-menu { flex: 1; padding: 16px 0; display: flex; flex-direction: column; overflow-y: auto; }
 .nav-item {
     padding: 12px 24px; cursor: pointer; display: flex; align-items: center; gap: 12px;
-    transition: all .2s; color: #94a3b8; font-weight: 600; font-size: 14px;
+    transition: all .2s; color: var(--sidebar-muted); font-weight: 600; font-size: 14px;
     margin: 1px 0; border: none; background: none; width: 100%; text-align: left;
     font-family: inherit; border-left: 3px solid transparent;
 }
-.nav-item:hover { background: var(--sidebar-hover); color: #e2e8f0; }
-.nav-item:focus-visible { outline: 2px solid #60a5fa; outline-offset: -2px; background: var(--sidebar-hover); color: #e2e8f0; }
-.nav-item.active { background: rgba(59,130,246,.1); color: #60a5fa; border-left-color: #3b82f6; }
+.nav-item:hover { background: var(--sidebar-hover); color: var(--sidebar-text); }
+.nav-item:focus-visible { outline: 2px solid var(--sidebar-accent); outline-offset: -2px; background: var(--sidebar-hover); color: var(--sidebar-text); }
+.nav-item.active { background: var(--sidebar-accent-bg); color: var(--sidebar-accent); border-left-color: var(--sidebar-accent-bar); }
 .nav-item:disabled { opacity: .35; cursor: not-allowed; }
-.nav-item:disabled:hover { background: none; color: #94a3b8; }
+.nav-item:disabled:hover { background: none; color: var(--sidebar-muted); }
 .nav-item .nav-icon { width: 24px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .nav-item .nav-icon svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; }
 .nav-item .nav-label { flex: 1; min-width: 0; }
 .nav-badge {
     font-size: 10px; padding: 3px 8px; border-radius: 6px; font-weight: 700;
-    background: rgba(59,130,246,.2); color: #60a5fa;
+    background: var(--sidebar-badge-bg); color: var(--sidebar-accent);
 }
-.nav-badge.warn { background: rgba(245,158,11,.2); color: #fbbf24; }
-.nav-badge.bad  { background: rgba(239,68,68,.2);  color: #f87171; }
+.nav-badge.warn { background: var(--sidebar-warn-bg); color: var(--sidebar-warn); }
+.nav-badge.bad  { background: var(--sidebar-bad-bg);  color: var(--sidebar-bad); }
 /* Одна строка. Кегль не константа: Manrope грузится из сети, и при откате на
    системный шрифт ширина строки уезжает на десяток пикселей — подбираем размер
    в рантайме (fitSidebarFooter), иначе строка либо переносится, либо мельчит зря. */
-.sidebar-footer { padding: 14px 16px; border-top: 1px solid rgba(255,255,255,.06); color: #94a3b8; line-height: 1.5; }
+.sidebar-footer { padding: 14px 16px; border-top: 1px solid var(--sidebar-line); color: var(--sidebar-muted); line-height: 1.5; }
 /* inline-block, а не block: у блочного элемента ширина равна контейнеру, и
    подбор кегля мерил бы коробку вместо текста. */
 .sidebar-footer .sf-line { display: inline-block; white-space: nowrap; font-size: 11px; }
-.sidebar-footer b { color: #60a5fa; font-weight: 700; }
+.sidebar-footer b { color: var(--sidebar-accent); font-weight: 700; }
 .sidebar-collapse-btn {
-    display: none; background: none; border: none; color: #64748b; cursor: pointer;
+    display: none; background: none; border: none; color: var(--sidebar-muted); cursor: pointer;
     padding: 5px; border-radius: 6px; transition: color .15s, background .15s;
 }
-.sidebar-collapse-btn:hover { color: #e2e8f0; background: rgba(255,255,255,.06); }
+.sidebar-collapse-btn:hover { color: var(--sidebar-text); background: var(--sidebar-line); }
 .sidebar-collapse-btn svg { transition: transform .3s; display: block; }
 
 @media (min-width: 1025px) {
@@ -174,7 +188,7 @@ body {
     display: flex; flex-direction: column;
 }
 .mobile-header {
-    display: none; background: var(--sidebar-bg); color: #fff;
+    display: none; background: var(--sidebar-bg); color: var(--sidebar-strong);
     padding: 12px 16px; align-items: center; justify-content: space-between;
     position: sticky; top: 0; z-index: 900;
 }
@@ -979,7 +993,7 @@ table.matrix td.cell[data-n] { cursor: default; }
         </button>
 
         <div style="flex:1"></div>
-        <div style="border-top:1px solid rgba(255,255,255,.06);margin:4px 16px"></div>
+        <div style="border-top:1px solid var(--sidebar-line);margin:4px 16px"></div>
 
         <button class="nav-item" data-page="report" role="tab" aria-selected="false" aria-controls="page-report" disabled>
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></span>
@@ -1444,7 +1458,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.1';
 
 const APP = {
     books: [],          // разобранные книги
