@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.7.2 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.8.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -48,9 +48,12 @@
 
 <style>
 /* ═══════════════════ ДИЗАЙН-ТОКЕНЫ ═══════════════════
-   Намеренно совпадают с FinAnalyst: инструменты одного семейства. */
+   Своя палитра, не общая с FinAnalyst: цвета взяты с логотипа — тёмно-синий
+   контур на светлом. Синий #3b82f6 был общим у обоих инструментов и вдобавок
+   давал белому тексту на кнопке контраст 3.7:1 — ниже нормы AA. Фирменный
+   #2b6cb8 даёт 5.3:1, то есть смена акцента заодно чинит читаемость. */
 :root {
-    --primary: #3b82f6;  --primary-dark: #2563eb;  --primary-light: #dbeafe;
+    --primary: #2b6cb8;  --primary-dark: #1e4f8f;  --primary-light: #e3edf9;
     --success: #10b981;  --success-light: #d1fae5;
     --warning: #f59e0b;  --warning-light: #fef3c7;
     --danger:  #ef4444;  --danger-light:  #fee2e2;
@@ -59,18 +62,20 @@
     /* Все цвета меню — токены, включая текст и разделители. Раньше половина была
        вписана прямо в правила, и сменить тему меню на светлую было нельзя:
        #e2e8f0 на белом фоне не читается. */
-    --sidebar-bg: #0f172a;  --sidebar-hover: #1e293b;  --sidebar-active: #334155;
-    --sidebar-text: #e2e8f0;      /* обычный текст пункта                       */
-    --sidebar-strong: #f8fafc;    /* шапка меню                                 */
-    --sidebar-muted: #94a3b8;     /* неактивный пункт, подпись проекта          */
-    --sidebar-line: rgba(255,255,255,.06);   /* разделители                     */
-    --sidebar-edge: rgba(255,255,255,.05);   /* правая граница меню             */
-    --sidebar-accent: #60a5fa;    /* активный пункт, бейджи, акцент             */
-    --sidebar-accent-bar: #3b82f6;/* полоса слева у активного пункта            */
-    --sidebar-accent-bg: rgba(59,130,246,.1);   /* фон активного пункта         */
-    --sidebar-badge-bg: rgba(59,130,246,.2);    /* фон бейджа                   */
-    --sidebar-warn: #fbbf24;  --sidebar-warn-bg: rgba(245,158,11,.2);
-    --sidebar-bad:  #f87171;  --sidebar-bad-bg:  rgba(239,68,68,.2);
+    /* Меню светлое: тёмный графит был чужим — он из FinAnalyst, а логотип
+       живёт на светлом. Контраст замерен: пункт 4.8:1, активный 8.2:1. */
+    --sidebar-bg: #ffffff;  --sidebar-hover: #f1f5f9;  --sidebar-active: #e2e8f0;
+    --sidebar-text: #1e3a5f;      /* обычный текст пункта — синий с логотипа    */
+    --sidebar-strong: #16304f;    /* шапка меню, логотип                        */
+    --sidebar-muted: #64748b;     /* неактивный пункт, подпись проекта          */
+    --sidebar-line: #e8eef5;      /* разделители                                */
+    --sidebar-edge: #dbe4ee;      /* правая граница меню                        */
+    --sidebar-accent: #1e4f8f;    /* активный пункт, бейджи, акцент             */
+    --sidebar-accent-bar: #1e4f8f;/* полоса слева у активного пункта            */
+    --sidebar-accent-bg: #e8f0fa; /* фон активного пункта                       */
+    --sidebar-badge-bg: #e0ebf8;  /* фон бейджа                                 */
+    --sidebar-warn: #b45309;  --sidebar-warn-bg: #fef3c7;
+    --sidebar-bad:  #b91c1c;  --sidebar-bad-bg:  #fee2e2;
     --bg: #f1f5f9;  --card: #ffffff;
     --text: #0f172a;  --text-secondary: #64748b;  --text-muted: #6b7280;
     --border: #e2e8f0;  --border-light: #f1f5f9;
@@ -115,11 +120,22 @@ body {
     border-right: 1px solid var(--sidebar-edge);
 }
 .sidebar-header {
-    padding: 20px 24px; font-size: 13px; font-weight: 700; letter-spacing: 2px;
-    text-transform: uppercase; border-bottom: 1px solid var(--sidebar-line);
-    display: flex; justify-content: space-between; align-items: center; color: var(--sidebar-strong);
+    padding: 18px 24px 14px; border-bottom: 1px solid var(--sidebar-line);
+    display: flex; flex-direction: column; gap: 7px; color: var(--sidebar-strong);
 }
+.sidebar-header .sh-row { display: flex; justify-content: space-between; align-items: center; }
 .sidebar-header .brand-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Подпись — живой текст, а не контуры из вектора: трассированные буквы на этой
+   ширине дают высоту 4.4 px и превращаются в кашу, тогда как текст в 9 px
+   читается и занимает 195 px при доступных 212. Кегль всё равно подбирается
+   в рантайме — Manrope грузится из сети, на подменном шрифте ширина другая. */
+.brand-tagline {
+    /* align-self обязателен: шапка — колоночный флекс, и по умолчанию элемент
+       растягивается на всю ширину. Подбор кегля мерил бы коробку, а не текст. */
+    display: inline-block; align-self: flex-start;
+    white-space: nowrap; font-size: 9px; font-weight: 700;
+    letter-spacing: .4px; text-transform: uppercase; color: var(--sidebar-muted);
+}
 /* Логотип — inline SVG, а не картинка: он наследует currentColor и одинаково
    ложится на тёмное и на светлое меню, весит 3 КБ и не мылится на любом экране.
    В свёрнутом меню остаётся только эмблема: подпись всё равно не поместится. */
@@ -174,6 +190,7 @@ body {
     body.sidebar-collapsed .sidebar { width: var(--sidebar-w-collapsed); }
     body.sidebar-collapsed .main-wrapper { margin-left: var(--sidebar-w-collapsed); width: calc(100% - var(--sidebar-w-collapsed)); }
     body.sidebar-collapsed .sidebar-header { justify-content: center; padding: 20px 0; }
+    body.sidebar-collapsed .brand-tagline { display: none; }
     body.sidebar-collapsed .brand-lockup { display: none; }
     body.sidebar-collapsed .brand-mark { display: block; height: 24px; }
     body.sidebar-collapsed .sidebar-header .ver-badge { display: none; }
@@ -195,8 +212,10 @@ body {
     display: none; background: var(--sidebar-bg); color: var(--sidebar-strong);
     padding: 12px 16px; align-items: center; justify-content: space-between;
     position: sticky; top: 0; z-index: 900;
+    /* На светлом меню шапка сливалась бы с содержимым — отделяем линией */
+    border-bottom: 1px solid var(--sidebar-edge);
 }
-.menu-toggle { display: none; background: none; border: none; color: #fff; cursor: pointer; padding: 4px; }
+.menu-toggle { display: none; background: none; border: none; color: currentColor; cursor: pointer; padding: 4px; }
 .menu-toggle svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 2; fill: none; display: block; }
 .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 950; }
 .overlay.open { display: block; }
@@ -938,6 +957,7 @@ table.matrix td.cell[data-n] { cursor: default; }
 <!-- ─────────────── SIDEBAR ─────────────── -->
 <aside class="sidebar" id="sidebar" role="complementary" aria-label="Навигация">
     <div class="sidebar-header">
+        <div class="sh-row">
         <span class="brand-wrap">
             <svg class="brand-logo brand-lockup" viewBox="261.1 247.2 880.9 273.3" fill="currentColor" role="img" aria-label="REX — Excel Reverse Engineering Tool"><g transform="translate(0,768) scale(0.1,-0.1)"><path d="M4385 5184 c-195 -19 -346 -48 -493 -94 -75 -23 -118 -44 -192 -94 -212 -144 -233 -170 -259 -311 -6 -33 -19 -71 -28 -84 -10 -12 -126 -81 -258 -153 -282 -152 -441 -243 -473 -272 -62 -55 -67 -120 -17 -221 30 -60 38 -95 61 -245 14 -96 32 -204 40 -240 40 -177 155 -265 359 -277 77 -4 100 -10 161 -40 93 -46 194 -61 301 -46 43 6 81 9 86 6 13 -8 55 -97 76 -164 31 -98 51 -231 51 -345 l0 -104 55 0 55 0 0 118 c0 193 -38 367 -109 498 l-29 54 37 22 c46 28 181 157 181 174 0 14 -56 64 -72 64 -5 0 -36 -26 -68 -59 -75 -76 -167 -128 -265 -148 -189 -38 -341 50 -530 310 -38 53 -75 98 -82 101 -6 3 -28 2 -47 -1 -27 -4 -36 -11 -36 -25 0 -40 76 -157 169 -261 19 -21 32 -39 30 -41 -2 -2 -32 5 -66 15 -71 22 -113 64 -138 139 -12 36 -43 219 -58 334 -1 15 9 22 47 33 90 26 206 176 209 267 1 46 -30 80 -89 96 -25 7 -41 16 -37 20 4 4 114 65 243 135 129 70 250 138 268 151 44 34 72 92 87 183 12 69 17 79 54 113 69 61 213 154 273 176 133 50 319 86 519 102 107 8 135 7 180 -6 97 -28 170 -75 260 -164 71 -70 94 -102 128 -173 56 -114 53 -128 -19 -83 -63 40 -85 44 -100 17 -18 -35 -12 -68 18 -87 159 -104 229 -233 266 -494 8 -58 38 -271 67 -474 59 -413 59 -440 3 -554 -52 -107 -296 -323 -458 -407 -111 -57 -197 -46 -270 36 -112 123 -170 369 -146 611 14 143 37 248 111 512 75 267 101 408 101 551 0 115 -22 250 -45 272 -9 10 -21 10 -49 2 -21 -5 -40 -14 -43 -18 -3 -5 2 -41 10 -81 33 -156 15 -350 -56 -605 -115 -409 -137 -514 -146 -690 -15 -313 92 -602 261 -700 158 -91 324 -32 611 216 199 172 275 307 275 487 0 31 -26 238 -59 460 -32 222 -54 399 -50 395 4 -4 69 -129 145 -278 198 -392 201 -397 227 -389 35 10 67 33 67 48 0 8 -121 252 -269 542 -195 382 -277 554 -297 619 -14 50 -38 113 -51 140 -85 169 -237 310 -415 383 -63 26 -171 36 -273 26z"/><path d="M6100 3951 l0 -791 198 2 197 3 3 228 2 227 192 -2 192 -3 166 -225 166 -225 217 -3 c119 -1 217 0 217 3 0 7 -334 460 -363 492 l-19 22 68 34 c126 63 210 159 255 288 32 92 33 247 2 345 -58 184 -203 306 -436 366 -77 20 -113 21 -569 25 l-488 5 0 -791z m875 478 c109 -20 188 -76 222 -156 7 -18 13 -63 13 -100 0 -123 -68 -203 -202 -239 -38 -10 -117 -14 -280 -14 l-228 0 0 260 0 260 208 0 c115 0 235 -5 267 -11z"/><path d="M8040 3950 l0 -790 678 2 677 3 0 150 0 150 -480 0 -480 0 -3 178 -2 177 410 0 410 0 0 145 0 145 -407 2 -408 3 -3 163 -2 162 465 0 465 0 0 150 0 150 -660 0 -660 0 0 -790z"/><path d="M9710 4732 c0 -4 132 -179 294 -387 l294 -379 -62 -81 c-34 -44 -173 -222 -309 -396 -136 -174 -247 -319 -247 -323 0 -3 101 -6 224 -6 l223 0 187 248 c232 308 224 298 229 292 2 -3 86 -115 187 -250 100 -135 192 -255 203 -267 20 -23 25 -23 244 -23 123 0 223 3 223 6 0 6 -91 125 -419 548 -121 156 -197 264 -193 270 20 28 208 268 455 583 70 89 127 164 127 167 0 3 -98 6 -218 6 l-219 0 -188 -245 c-103 -134 -193 -249 -199 -254 -7 -6 -68 68 -191 232 -99 132 -186 246 -193 254 -10 10 -63 13 -233 13 -120 0 -219 -4 -219 -8z"/></g></svg>
             <svg class="brand-logo brand-mark" viewBox="261.1 247.2 309.9 273.3" fill="currentColor" aria-hidden="true"><g transform="translate(0,768) scale(0.1,-0.1)"><path d="M4385 5184 c-195 -19 -346 -48 -493 -94 -75 -23 -118 -44 -192 -94 -212 -144 -233 -170 -259 -311 -6 -33 -19 -71 -28 -84 -10 -12 -126 -81 -258 -153 -282 -152 -441 -243 -473 -272 -62 -55 -67 -120 -17 -221 30 -60 38 -95 61 -245 14 -96 32 -204 40 -240 40 -177 155 -265 359 -277 77 -4 100 -10 161 -40 93 -46 194 -61 301 -46 43 6 81 9 86 6 13 -8 55 -97 76 -164 31 -98 51 -231 51 -345 l0 -104 55 0 55 0 0 118 c0 193 -38 367 -109 498 l-29 54 37 22 c46 28 181 157 181 174 0 14 -56 64 -72 64 -5 0 -36 -26 -68 -59 -75 -76 -167 -128 -265 -148 -189 -38 -341 50 -530 310 -38 53 -75 98 -82 101 -6 3 -28 2 -47 -1 -27 -4 -36 -11 -36 -25 0 -40 76 -157 169 -261 19 -21 32 -39 30 -41 -2 -2 -32 5 -66 15 -71 22 -113 64 -138 139 -12 36 -43 219 -58 334 -1 15 9 22 47 33 90 26 206 176 209 267 1 46 -30 80 -89 96 -25 7 -41 16 -37 20 4 4 114 65 243 135 129 70 250 138 268 151 44 34 72 92 87 183 12 69 17 79 54 113 69 61 213 154 273 176 133 50 319 86 519 102 107 8 135 7 180 -6 97 -28 170 -75 260 -164 71 -70 94 -102 128 -173 56 -114 53 -128 -19 -83 -63 40 -85 44 -100 17 -18 -35 -12 -68 18 -87 159 -104 229 -233 266 -494 8 -58 38 -271 67 -474 59 -413 59 -440 3 -554 -52 -107 -296 -323 -458 -407 -111 -57 -197 -46 -270 36 -112 123 -170 369 -146 611 14 143 37 248 111 512 75 267 101 408 101 551 0 115 -22 250 -45 272 -9 10 -21 10 -49 2 -21 -5 -40 -14 -43 -18 -3 -5 2 -41 10 -81 33 -156 15 -350 -56 -605 -115 -409 -137 -514 -146 -690 -15 -313 92 -602 261 -700 158 -91 324 -32 611 216 199 172 275 307 275 487 0 31 -26 238 -59 460 -32 222 -54 399 -50 395 4 -4 69 -129 145 -278 198 -392 201 -397 227 -389 35 10 67 33 67 48 0 8 -121 252 -269 542 -195 382 -277 554 -297 619 -14 50 -38 113 -51 140 -85 169 -237 310 -415 383 -63 26 -171 36 -273 26z"/></g></svg>
@@ -946,9 +966,11 @@ table.matrix td.cell[data-n] { cursor: default; }
         <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" aria-label="Свернуть меню" title="Свернуть меню">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
         </button>
-        <button class="menu-toggle" id="sidebar-close-btn" style="color:#64748b" aria-label="Закрыть меню">
+        <button class="menu-toggle" id="sidebar-close-btn" style="color:var(--sidebar-muted)" aria-label="Закрыть меню">
             <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
+        </div>
+        <span class="brand-tagline" id="brand-tagline">Excel Reverse Engineering Tool</span>
     </div>
 
     <nav class="nav-menu" role="tablist" aria-label="Разделы">
@@ -1463,7 +1485,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.7.2';
+const APP_VERSION = '1.8.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -7038,29 +7060,33 @@ function initEvents() {
 document.querySelectorAll('svg[data-gear]').forEach(el => { el.innerHTML = ICONS.query; });
 
 /**
- * Подпись проекта должна лежать в одну строку. Ширина сайдбара фиксирована (260 px),
- * а ширина строки зависит от того, доехал ли Manrope: на системном шрифте она
- * отличается на десяток пикселей. Поэтому подбираем кегль по факту, а не константой,
- * и повторяем после загрузки шрифтов — иначе первый расчёт был бы по подменному.
+ * Строка должна лечь в одну линию. Ширина меню фиксирована (260 px), а ширина
+ * текста зависит от того, доехал ли Manrope: на системном шрифте она отличается
+ * на десяток пикселей. Поэтому кегль подбираем по факту, а не константой, и
+ * повторяем после загрузки шрифтов — иначе первый расчёт был бы по подменному.
  */
-function fitSidebarFooter() {
-    const line = $('#sidebar-brand');
+function fitLine(sel, start, floor) {
+    const line = $(sel);
     if (!line) return;
     const box = line.parentElement, cs = getComputedStyle(box);
     const avail = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     if (avail <= 0) return;
-    let fs = 11;
+    let fs = start;
     line.style.fontSize = fs + 'px';
     // Запас 2 px: без него строка встаёт вплотную к отступу, и субпиксельное
     // округление в другом браузере может её уронить на вторую строку.
-    while (line.getBoundingClientRect().width > avail - 2 && fs > 7.5) {
+    while (line.getBoundingClientRect().width > avail - 2 && fs > floor) {
         fs -= 0.25;
         line.style.fontSize = fs + 'px';
     }
 }
-fitSidebarFooter();
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSidebarFooter);
-window.addEventListener('resize', fitSidebarFooter);
+function fitSidebarText() {
+    fitLine('#sidebar-brand', 11, 7.5);   // подпись проекта в подвале
+    fitLine('#brand-tagline', 9.5, 7);    // подпись под логотипом
+}
+fitSidebarText();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSidebarText);
+window.addEventListener('resize', fitSidebarText);
 
 $('#sidebar-version').textContent = 'v' + APP_VERSION;
 renderCapabilities();
