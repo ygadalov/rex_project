@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.6.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.7.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1444,7 +1444,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -5656,10 +5656,106 @@ function fitGraph(cy, pad) {
     });
 }
 
+/* ═══════════ ЗАВОРАЧИВАНИЕ СЛОЁВ ═══════════
+   dagre отводит строку почти каждому узлу: у книги на 77 связанных объектов
+   получалось 5 слоёв в ширину и 72 строки в высоту — лента 606×3758 px,
+   которая вписывается в холст с масштабом 0.12, то есть не читается вовсе.
+   Замер подтвердил модель: высота ≈ число узлов × шаг. При зазоре 26 это
+   72×54 = 3888 (факт 3758), при зазоре 12 — 72×40 = 2880 (факт 2830).
+
+   Лечим не зазором, а формой: слой из 27 узлов ставим не одной линией, а
+   сеткой — например четыре подколонки по семь. Слои по-прежнему идут по
+   направлению потока, порядок внутри слоя остаётся тем, что dagre подобрал
+   против пересечений. На той же книге: 1630×482 px, масштаб 0.65. */
+
+const WRAP_CELL_X = 132;   // шаг поперёк подписи: до 116 px текста + зазор
+const WRAP_CELL_Y = 54;    // шаг по вертикали: узел 28 + подпись под ним + зазор
+const WRAP_GAP    = 0.6;   // зазор между слоями, долями шага
+const WRAP_MIN_NODES = 12; // на малом графе dagre и так читается
+const WRAP_GAIN   = 1.15;  // ниже такого выигрыша раскладку не трогаем
+
+/** Во сколько раз граф с такими габаритами влезет в холст. */
+function fitZoom(w, h, pad) {
+    const box = $('#cy'), r = box ? box.getBoundingClientRect() : null;
+    const W = (r && r.width > 0 ? r.width : 1400) - 2 * pad;
+    const H = (r && r.height > 0 ? r.height : 640) - 2 * pad;
+    if (w <= 0 || h <= 0) return 0;
+    return Math.min(W / w, H / h);
+}
+
+/**
+ * Переставить узлы так, чтобы слой занимал прямоугольник, а не длинную линию.
+ *
+ * @param rankAxis 'x' для «Потоком →» (слои идут вправо), 'y' для «Слоями ↓»
+ * @returns true, если раскладка изменена
+ */
+function wrapRanks(cy, rankAxis) {
+    const linked = cy.nodes().filter(n => !n.isParent() && n.degree(false) > 0);
+    if (linked.length < WRAP_MIN_NODES) return false;
+    const crossAxis = rankAxis === 'x' ? 'y' : 'x';
+
+    /* Слои берём у dagre, а не считаем заново: он уже развёл узлы по глубине
+       и упорядочил внутри слоя против пересечений — эту работу терять незачем. */
+    const vals = [...new Set(linked.map(n => Math.round(n.position(rankAxis))))].sort((a, b) => a - b);
+    const ranks = [];
+    vals.forEach(v => { if (!ranks.length || v - ranks[ranks.length - 1] > 40) ranks.push(v); });
+    if (ranks.length < 2) return false;
+
+    const groups = ranks.map(() => []);
+    linked.forEach(n => {
+        const v = n.position(rankAxis);
+        let bi = 0, best = Infinity;
+        ranks.forEach((r, i) => { const d = Math.abs(v - r); if (d < best) { best = d; bi = i; } });
+        groups[bi].push(n);
+    });
+    groups.forEach(g => g.sort((a, b) => a.position(crossAxis) - b.position(crossAxis)));
+
+    const stepRank  = rankAxis === 'x' ? WRAP_CELL_X : WRAP_CELL_Y;
+    const stepCross = rankAxis === 'x' ? WRAP_CELL_Y : WRAP_CELL_X;
+    const sizes = groups.map(g => g.length);
+
+    /* Сколько узлов ставить в линию — подбираем перебором по тому, что реально
+       важно: во сколько раз результат влезет в холст. Оптимум сам выродится в
+       «не заворачивать», если граф и так помещается. */
+    const extents = lines => {
+        const along = groups.reduce((a, g) => a + Math.ceil(g.length / lines) * stepRank, 0)
+                    + (groups.length - 1) * stepRank * WRAP_GAP;
+        const across = Math.min(lines, Math.max.apply(null, sizes)) * stepCross;
+        return rankAxis === 'x' ? { w: along, h: across } : { w: across, h: along };
+    };
+    let best = null;
+    for (let lines = 1; lines <= Math.max.apply(null, sizes); lines++) {
+        const e = extents(lines), z = fitZoom(e.w, e.h, 40);
+        if (!best || z > best.z) best = { lines, z, e };
+    }
+    if (!best) return false;
+
+    // Что даёт нынешняя раскладка dagre — с тем и сравниваем
+    const bb = linked.boundingBox();
+    const was = fitZoom(bb.w, bb.h, 40);
+    if (!(best.z > was * WRAP_GAIN)) return false;
+
+    let cursor = 0;
+    groups.forEach(g => {
+        const sub = Math.max(1, Math.ceil(g.length / best.lines));
+        const perLine = Math.ceil(g.length / sub);
+        g.forEach((n, i) => {
+            const s = Math.floor(i / perLine), k = i % perLine;
+            const along = cursor + s * stepRank, across = k * stepCross;
+            n.position(rankAxis === 'x' ? { x: along, y: across } : { x: across, y: along });
+        });
+        cursor += sub * stepRank + stepRank * WRAP_GAP;
+    });
+    return true;
+}
+
 /** Раскладка + упаковка одиночек + вписывание: всегда вместе, иначе разъедется. */
 function runLayout(cy, name) {
     const l = cy.layout(Object.assign({}, LAYOUTS[name], { fit: false }));
     l.run();
+    // Заворачивание касается только слоёных раскладок: у силовой слоёв нет
+    const dir = (LAYOUTS[name] || {}).rankDir;
+    if (dir) wrapRanks(cy, dir === 'LR' ? 'x' : 'y');
     if (packOrphans(cy)) fitGraph(cy, 40);
     else fitGraph(cy, (LAYOUTS[name] || {}).padding || 40);
 }
