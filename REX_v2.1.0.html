@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.0.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.1.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -171,6 +171,21 @@ body {
 .nav-item .nav-icon { width: 24px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .nav-item .nav-icon svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2; fill: none; }
 .nav-item .nav-label { flex: 1; min-width: 0; }
+.scope-bar { padding: 10px 14px 12px; border-bottom: 1px solid var(--sidebar-line); display: flex; flex-direction: column; gap: 5px; }
+.scope-label { font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--sidebar-muted); }
+.scope-select {
+    width: 100%; padding: 6px 8px; font: inherit; font-size: 12px; font-weight: 600;
+    color: var(--sidebar-strong); background: var(--sidebar-badge-bg);
+    border: 1px solid var(--sidebar-edge); border-radius: 7px; cursor: pointer;
+}
+.scope-select:focus-visible { outline: 2px solid var(--sidebar-accent); outline-offset: 1px; }
+.btn-drop {
+    display: inline-flex; align-items: center; justify-content: center; padding: 4px;
+    background: none; border: 1px solid transparent; border-radius: 6px;
+    color: var(--text-muted); cursor: pointer; flex-shrink: 0;
+}
+.btn-drop:hover { color: #b91c1c; border-color: #fca5a5; background: #fef2f2; }
+body.sidebar-collapsed .scope-bar { display: none; }
 .nav-badge {
     font-size: 10px; padding: 3px 8px; border-radius: 6px; font-weight: 700;
     background: var(--sidebar-badge-bg); color: var(--sidebar-accent);
@@ -1023,6 +1038,12 @@ table.matrix td.cell[data-n] { cursor: default; }
         <span class="brand-tagline" id="brand-tagline">Excel Reverse Engineering Tool</span>
     </div>
 
+    <!-- Появляется только когда книг больше одной: с одной выбирать нечего. -->
+    <div class="scope-bar" id="scope-bar" hidden>
+        <label class="scope-label" for="scope-select">Разбираем книгу</label>
+        <select id="scope-select" class="scope-select" aria-label="Какую книгу разбирать"></select>
+    </div>
+
     <nav class="nav-menu" role="tablist" aria-label="Разделы">
         <button class="nav-item active" data-page="upload" role="tab" aria-selected="true" aria-controls="page-upload">
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
@@ -1480,6 +1501,7 @@ table.matrix td.cell[data-n] { cursor: default; }
         <div class="card-title">Что удалять <span class="hint" id="cleanup-sum"></span></div>
         <div class="cl-groups" id="cleanup-groups"></div>
         <div class="cl-opts">
+            <span class="muted" id="cleanup-book"></span>
             <span class="muted" id="cleanup-protect"></span>
         </div>
         <div class="cleanup-warn" id="cleanup-step">
@@ -1568,7 +1590,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.0.1';
+const APP_VERSION = '2.1.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1588,7 +1610,31 @@ const APP = {
     impactFilter: null,     // уровень влияния, по которому фильтруется список листов
     impactIgnore: null,     // оговорки, снятые вручную
     impactCache: null,      // разбор влияния — пересчитывается при смене оговорок
+    scope: null,            // какую книгу показывать: null — все, иначе индекс в books
 };
+
+/* ───────────────────────── область просмотра ─────────────────────────
+   Когда книг загружено больше одной, страницы по умолчанию складывали их
+   данные в одну кучу: 19 листов превращались в 38, а «Качество данных»
+   печатало каждое правило дважды. Складывать две версии одного файла
+   бессмысленно, поэтому есть область — какую книгу сейчас разбираем.
+
+   Храним индекс, а не ссылку на книгу: узлы графа и идентификаторы
+   объектов адресуются номером книги («s:0:Лист1»), и подмена массива
+   сбила бы эту адресацию. Поэтому отрисовщики продолжают ходить по
+   APP.books с настоящим индексом, а лишнее отсекают через inScope. */
+
+/** Показывать ли книгу с этим индексом при текущей области. */
+function inScope(bi) { return APP.scope == null || APP.scope === bi; }
+
+/** Книги, попадающие в область. Для сумм и «есть ли хоть одна». */
+function scopedBooks() { return APP.books.filter((b, i) => inScope(i)); }
+
+/** Находки аудита, попадающие в область. */
+function scopedIssues() { return APP.issues.filter(i => inScope(i.bookIdx)); }
+
+/** Книга области, или первая — там, где нужна ровно одна (например, макрос). */
+function scopeBook() { return APP.books[APP.scope == null ? 0 : APP.scope] || null; }
 
 /* ───────────────────────── мелкие утилиты ───────────────────────── */
 
@@ -3179,7 +3225,7 @@ function buildGraph(books) {
 
     books.forEach((book, bi) => {
         const P = multi ? 'bk:' + bi : null;
-        if (P) addNode(P, 'book', book.fileName, { isParent: true });
+        if (P) addNode(P, 'book', book.fileName, { isParent: true, bookIdx: bi });
 
         const sid = n => 's:' + bi + ':' + n;
         const tid = n => 't:' + bi + ':' + n;
@@ -3403,9 +3449,14 @@ const FIX_HINTS = {
 
 function runAudit(books, graph) {
     const issues = [];
-    const add = o => { if (o && o.count > 0) issues.push(o); };
+    // Правила проверяются для каждой книги отдельно, поэтому с двумя книгами
+    // один и тот же id встречается дважды. Помечаем находку номером книги,
+    // иначе «Качество данных» печатает весь список по два раза.
+    let auditBook = 0;
+    const add = o => { if (o && o.count > 0) issues.push(Object.assign({ bookIdx: auditBook }, o)); };
 
     books.forEach((book, bi) => {
+        auditBook = bi;
         const sheets = book.sheets || [];
         const pre = books.length > 1 ? book.fileName + ' · ' : '';
         const loc = (sh, cell) => pre + sh + (cell ? '!' + cell : '');
@@ -3850,13 +3901,7 @@ async function loadFiles(fileList, append) {
 
     logLine('ok', 'Строю граф связей…');
     await nextFrame();
-    APP.typeFilter = null;                        // новая книга — пересобираем фильтр типов
-    APP.edgeFilter = null;
-    APP.userLayout = false;
-    APP.graph  = buildGraph(APP.books);
-    deriveInvisibleEdges(APP.graph, APP.books);   // догадки по INDIRECT("Лист!A1")
-    APP.issues = runAudit(APP.books, APP.graph);
-    APP.health = computeHealth(APP.issues);
+    rebuildDerived();
     setProgress(100);
     logLine('ok', 'Узлов ' + APP.graph.nodes.length + ', связей ' + APP.graph.edges.length + ', находок ' + APP.issues.length);
 
@@ -3871,7 +3916,71 @@ async function loadFiles(fileList, append) {
    ОТРИСОВКА
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/** Пересобрать всё, что вычисляется из набора книг: граф, догадки о скрытых
+    связях, аудит. Нужна и после разбора новых файлов, и после удаления книги —
+    иначе на графе остаются узлы уже выброшенного файла. */
+function rebuildDerived() {
+    // По умолчанию смотрим одну книгу, а не «все»: складывать две версии одного
+    // файла бессмысленно, и именно эта сумма раньше выдавала 38 листов вместо 19.
+    // «Все книги» остаётся в списке, но выбирается руками.
+    if (APP.books.length && (APP.scope == null || !APP.books[APP.scope])) APP.scope = 0;
+    APP.typeFilter = null;              // набор книг сменился — фильтр типов пересобираем
+    APP.edgeFilter = null;
+    APP.userLayout = false;
+    APP.impactCache = null;
+    APP.sheetScope = null;
+    APP.colSheet = null;
+    APP.graph  = buildGraph(APP.books);
+    deriveInvisibleEdges(APP.graph, APP.books);   // догадки по INDIRECT("Лист!A1")
+    APP.issues = runAudit(APP.books, APP.graph);
+    APP.health = computeHealth(APP.issues);
+}
+
+/** Убрать книгу из разбора. Кнопка живёт на «Загрузке»: добавление книг там же,
+    и держать парную операцию в другом месте было бы странно. */
+function dropBook(i) {
+    const book = APP.books[i];
+    if (!book) return;
+    APP.books.splice(i, 1);
+
+    // Область указывает индексом. После сдвига массива индекс либо уезжает на
+    // соседнюю книгу, либо указывает за конец — и то и другое надо поправить.
+    if (APP.scope != null) {
+        if (APP.scope === i) APP.scope = 0;
+        else if (APP.scope > i) APP.scope -= 1;
+    }
+    if (!APP.books.length) APP.scope = null;
+
+    APP.diff = null;                    // пара могла распасться
+    APP.diffA = APP.diffB = null;       // выбор «было/стало» указывал индексами
+    if (APP.books.length) {
+        rebuildDerived();
+        renderAll();
+        unlockPages();
+    } else {
+        APP.graph = { nodes: [], edges: [] };
+        APP.issues = []; APP.health = null;
+        renderAll();
+    }
+    // «Сравнение версий» держится на паре книг: осталась одна — пункт гаснет
+    const nav = document.querySelector('.nav-item[data-page="diff"]');
+    if (nav && APP.books.length < 2) {
+        nav.disabled = true;
+        if ($('.nav-item[data-page="diff"]').classList.contains('active'))
+            goPage(APP.books.length ? 'overview' : 'upload');
+    }
+    if (!APP.books.length) {
+        $$('.nav-item').forEach(b => { if (b.dataset.page !== 'upload') b.disabled = true; });
+        goPage('upload');
+    }
+    showNotification('Книга убрана: ' + book.fileName, 'info', 3500);
+}
+
 function renderAll() {
+    renderScopeBar();
+    // Здоровье — по видимой области: показывать 100 из 100 по двум книгам,
+    // когда на экране одна, значит вводить в заблуждение.
+    APP.health = computeHealth(scopedIssues());
     renderLoadedList();
     renderOverview();
     renderSheets();
@@ -3918,10 +4027,11 @@ function renderBadges() {
     grp.closest('.chk').style.opacity = grp.disabled ? .45 : 1;
     grp.closest('.chk').title = grp.disabled ? 'Нужны минимум две книги' : 'Показывать листы внутри рамки книги';
 
-    const totalSheets = APP.books.reduce((a, b) => a + b.sheets.length, 0);
-    const totalQ = APP.books.reduce((a, b) => a + (b.queries || []).length, 0);
-    const crit = APP.issues.filter(i => i.severity === 'critical').length;
-    const major = APP.issues.filter(i => i.severity === 'major').length;
+    const totalSheets = scopedBooks().reduce((a, b) => a + b.sheets.length, 0);
+    const totalQ = scopedBooks().reduce((a, b) => a + (b.queries || []).length, 0);
+    const iss = scopedIssues();
+    const crit = iss.filter(i => i.severity === 'critical').length;
+    const major = iss.filter(i => i.severity === 'major').length;
     set('#badge-sheets', totalSheets);
     set('#badge-pq', totalQ || null);
     // #badge-graph заполняет renderGraph: там известно, сколько узлов реально видно
@@ -3942,12 +4052,25 @@ function renderBadges() {
         пар && APP.diff && APP.diff.всего ? 'warn' : null);
 }
 
+/** Полоса выбора книги. Показываем только со второй книги: с одной
+    выбирать нечего, а лишний элемент управления сбивает с толку. */
+function renderScopeBar() {
+    const bar = $('#scope-bar'), sel = $('#scope-select');
+    const many = APP.books.length > 1;
+    bar.hidden = !many;
+    if (!many) { APP.scope = APP.books.length ? 0 : null; return; }
+    sel.innerHTML = APP.books.map((b, i) =>
+        '<option value="' + i + '"' + (APP.scope === i ? ' selected' : '') + '>' +
+        esc(b.fileName) + '</option>').join('') +
+        '<option value="all"' + (APP.scope == null ? ' selected' : '') + '>Все книги сразу</option>';
+}
+
 function renderLoadedList() {
     const el = $('#loaded-list');
     $('#dz-add').hidden = !APP.books.length;
     if (!APP.books.length) { el.innerHTML = ''; return; }
     el.innerHTML = '<div class="card"><div class="card-title">Загружено</div>' +
-        APP.books.map(b => {
+        APP.books.map((b, i) => {
             const conf = FULL_FORMATS.has(b.format) ? ['full', 'полный разбор']
                        : b.format === 'xlsb' ? ['partial', 'частичный разбор']
                        : ['partial', 'ограниченный разбор'];
@@ -3957,6 +4080,11 @@ function renderLoadedList() {
                 '<span class="muted">' + fmtBytes(b.size) + '</span>' +
                 '<span class="muted">' + b.sheets.length + ' лист.</span>' +
                 '<span class="confidence ' + conf[0] + '">' + conf[1] + '</span>' +
+                '<button class="btn-drop" data-drop="' + i + '" title="Убрать книгу из разбора" ' +
+                'aria-label="Убрать книгу ' + esc(b.fileName) + ' из разбора">' +
+                '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" ' +
+                'stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+                '</button>' +
                 '</div>';
         }).join('') + '</div>';
 }
@@ -3964,7 +4092,7 @@ function renderLoadedList() {
 /* ─────────────── ОБЗОР ─────────────── */
 
 function renderOverview() {
-    const B = APP.books;
+    const B = scopedBooks();
     const sum = fn => B.reduce((a, b) => a + fn(b), 0);
     const sheets = sum(b => b.sheets.length);
     const formulas = sum(b => b.sheets.reduce((x, s) => x + (s.formulaCount || 0), 0));
@@ -4023,7 +4151,7 @@ function renderOverview() {
         '</div>';
 
     /* топ находок */
-    const top = APP.issues.slice(0, 5);
+    const top = scopedIssues().slice(0, 5);
     $('#overview-top-issues').innerHTML = top.length
         ? top.map(i => '<div style="display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px solid var(--border-light)">' +
             '<span class="pill pill-' + (i.severity === 'critical' ? 'red' : i.severity === 'major' ? 'amber' : 'blue') + '">' + SEV[i.severity].label + '</span>' +
@@ -4059,7 +4187,7 @@ const NAMES_SHOWN = 500;   // в боевых книгах имён бывают
 
 function sheetRows() {
     const rows = [];
-    APP.books.forEach((b, bi) => b.sheets.forEach(s => {
+    APP.books.forEach((b, bi) => inScope(bi) && b.sheets.forEach(s => {
         const node = APP.graph.index.get('s:' + bi + ':' + s.name);
         rows.push({
             book: b.fileName, bookIdx: bi, name: s.name, state: s.state,
@@ -4116,7 +4244,7 @@ function renderSheets() {
             ? 'По этому уровню листов нет' : 'Листов не найдено') + '</td></tr>';
 
     const allTables = [];
-    APP.books.forEach((b, bi) => (b.tables || []).forEach(t =>
+    APP.books.forEach((b, bi) => inScope(bi) && (b.tables || []).forEach(t =>
         allTables.push(Object.assign({ book: b.fileName, bookIdx: bi }, t))));
     $('#tables-hint').textContent = allTables.length ? allTables.length + ' шт.' : '';
     const tblId = t => 't:' + t.bookIdx + ':' + t.name;
@@ -4145,7 +4273,7 @@ function renderSheets() {
     ).join('') || '<tr><td colspan="7" class="empty-state">' +
         (scope ? 'На листе «' + esc(scope.name) + '» умных таблиц нет'
             : APP.impactFilter && APP.impactFilter !== 'all' ? 'По этому уровню таблиц нет'
-            : 'Умных таблиц нет' + (APP.books.some(b => b.format === 'xls') ? ' (формат .xls их не поддерживает)' : '')) +
+            : 'Умных таблиц нет' + (scopedBooks().some(b => b.format === 'xls') ? ' (формат .xls их не поддерживает)' : '')) +
         '</td></tr>';
 
     /* Скрытые имена (hidden="1") Excel не показывает даже в Диспетчере имён (Ctrl+F3).
@@ -4160,7 +4288,7 @@ function renderSheets() {
         return String(n.ref || '').replace(/'/g, '').indexOf(scope.name + '!') !== -1;
     };
     const everyName = [];
-    APP.books.forEach((b, bi) => (b.names || []).filter(n => !n.builtin)
+    APP.books.forEach((b, bi) => inScope(bi) && (b.names || []).filter(n => !n.builtin)
         .forEach(n => everyName.push(Object.assign({ bookIdx: bi }, n))));
     const hiddenNames = everyName.filter(n => n.hidden && onScope(n));
     const visibleNames = everyName.filter(n => !n.hidden && onScope(n));
@@ -4345,7 +4473,7 @@ function renderFormulas() {
 
     /* внешние ссылки */
     const links = [];
-    APP.books.forEach(b => (b.externalLinks || []).forEach(l => links.push(Object.assign({ book: b.fileName }, l))));
+    scopedBooks().forEach(b => (b.externalLinks || []).forEach(l => links.push(Object.assign({ book: b.fileName }, l))));
     $('#extlinks-tbody').innerHTML = links.map(l =>
         '<tr><td class="mono">' + esc(l.index) + '</td>' +
         '<td class="mono" style="font-size:11.5px;overflow-wrap:anywhere">' + esc(l.path) + '</td>' +
@@ -4357,7 +4485,7 @@ function renderFormulas() {
 
     /* функции */
     const funcs = new Map();
-    APP.books.forEach(b => b.sheets.forEach(s => (s.funcs || new Map()).forEach((n, f) => funcs.set(f, (funcs.get(f) || 0) + n))));
+    scopedBooks().forEach(b => b.sheets.forEach(s => (s.funcs || new Map()).forEach((n, f) => funcs.set(f, (funcs.get(f) || 0) + n))));
     const top = Array.from(funcs.entries()).sort((a, b) => b[1] - a[1]).slice(0, 25);
     $('#funcs-tbody').innerHTML = top.map(([f, n]) => {
         const note = FUNC_NOTES[f];
@@ -4367,7 +4495,7 @@ function renderFormulas() {
 
     /* самые длинные формулы */
     const longest = [];
-    APP.books.forEach((b, bi) => b.sheets.forEach(s => (s.longest || []).forEach(l =>
+    APP.books.forEach((b, bi) => inScope(bi) && b.sheets.forEach(s => (s.longest || []).forEach(l =>
         longest.push({ bi, sheet: s.name, cell: l.cell, len: l.len, f: l.f }))));
     longest.sort((a, b) => b.len - a.len);
     $('#longest-formulas').innerHTML = longest.slice(0, 8).map(l =>
@@ -4427,12 +4555,12 @@ const SRC_ICON = { db: '🗄', file: '📄', folder: '📁', web: '🌐', 'workb
 
 function renderPQ() {
     const all = [];
-    APP.books.forEach((b, bi) => (b.queries || []).forEach(q => all.push(Object.assign({ bi, book: b.fileName }, q))));
+    APP.books.forEach((b, bi) => inScope(bi) && (b.queries || []).forEach(q => all.push(Object.assign({ bi, book: b.fileName }, q))));
     $('#pq-sub').textContent = all.length ? all.length + ' запросов' : '';
     $('#btn-export-m').disabled = !all.length;
 
     if (!all.length) {
-        const hasXls = APP.books.some(b => b.format === 'xls');
+        const hasXls = scopedBooks().some(b => b.format === 'xls');
         $('#pq-content').innerHTML = '<div class="card"><div class="empty-state">' +
             (hasXls ? 'В формате .xls технологии Power Query не существовало.'
                     : 'В книге нет запросов Power Query — контейнер DataMashup отсутствует.') +
@@ -4493,7 +4621,7 @@ function renderPQ() {
 
 function renderModel() {
     const parts = [];
-    APP.books.forEach(b => {
+    scopedBooks().forEach(b => {
         const m = b.model || { present: false, measures: [], tables: [] };
         parts.push('<div class="card"><div class="card-title">' + esc(b.fileName) + '</div>');
 
@@ -4553,7 +4681,7 @@ function renderModel() {
 
     /* сводные таблицы — они есть и без модели данных */
     const pivots = [];
-    APP.books.forEach(b => (b.pivots || []).forEach(p => {
+    scopedBooks().forEach(b => (b.pivots || []).forEach(p => {
         const cache = cacheOf(b, p);
         pivots.push({ book: b.fileName, name: p.name, sheet: p.sheet, location: p.location,
             src: cache ? (cache.sourceType === 'external' ? 'модель данных / внешнее подключение' : (cache.sheet ? 'лист ' + cache.sheet + (cache.ref ? ' (' + cache.ref + ')' : '') : '—')) : '—' });
@@ -4574,10 +4702,11 @@ let sevFilter = 'all';
 const ISSUE_ITEMS_SHOWN = 200;   // больше в DOM класть незачем — счётчик остаётся полным
 
 function renderQuality() {
-    const counts = { all: APP.issues.length };
-    Object.keys(SEV).forEach(s => counts[s] = APP.issues.filter(i => i.severity === s).length);
-    const totalFindings = APP.issues.reduce((a, i) => a + i.count, 0);
-    $('#quality-sub').textContent = APP.issues.length + ' правил сработало, ' + fmtNum(totalFindings) + ' находок';
+    const iss = scopedIssues();
+    const counts = { all: iss.length };
+    Object.keys(SEV).forEach(s => counts[s] = iss.filter(i => i.severity === s).length);
+    const totalFindings = iss.reduce((a, i) => a + i.count, 0);
+    $('#quality-sub').textContent = iss.length + ' правил сработало, ' + fmtNum(totalFindings) + ' находок';
 
     $('#sev-filter').innerHTML =
         '<button class="btn btn-sm ' + (sevFilter === 'all' ? '' : 'btn-outline') + '" data-sev="all">Все (' + counts.all + ')</button>' +
@@ -4585,7 +4714,7 @@ function renderQuality() {
             '<button class="btn btn-sm ' + (sevFilter === k ? '' : 'btn-outline') + '" data-sev="' + k + '"' +
             (sevFilter === k ? ' style="background:' + v.color + '"' : '') + '>' + v.label + ' (' + counts[k] + ')</button>').join('');
 
-    const list = APP.issues.filter(i => sevFilter === 'all' || i.severity === sevFilter);
+    const list = iss.filter(i => sevFilter === 'all' || i.severity === sevFilter);
     $('#quality-list').innerHTML = list.length ? list.map((iss, n) =>
         '<div class="issue" style="--sev-color:' + SEV[iss.severity].color + '" data-issue="' + n + '">' +
         '<div class="issue-head">' +
@@ -4710,7 +4839,11 @@ const looksBuiltin = bare => {
     Диспетчере имён и разбирается с ними сам, макрос для этого не нужен. */
 function classifyNames() {
     const rows = [];
-    APP.books.forEach((b, bi) => (b.names || []).forEach(n => {
+    // Строго одна книга, даже если область — «все»: макрос всегда пишется под
+    // конкретный файл, а смешать имена двух книг в один список значит соврать
+    // и в счётчиках, и в списке защищённых имён.
+    const bi = APP.scope == null ? 0 : APP.scope;
+    [APP.books[bi]].filter(Boolean).forEach(b => (b.names || []).forEach(n => {
         const bare = bareName(n.name);
         const isBuiltin = n.builtin || looksBuiltin(bare);
         // Встроенные показываем отдельной запертой строкой, а не прячем: иначе
@@ -4737,7 +4870,8 @@ function classifyNames() {
 /** Имена, которые макрос не должен трогать ни при каких настройках. */
 function protectedNames() {
     const out = [];
-    APP.books.forEach(b => (b.names || []).forEach(n => {
+    // Та же книга, что и в classifyNames: защита относится к конкретному файлу.
+    [scopeBook()].filter(Boolean).forEach(b => (b.names || []).forEach(n => {
         if (!n.builtin && n.uses > 0) out.push(bareName(n.name));
     }));
     return Array.from(new Set(out));
@@ -4783,7 +4917,7 @@ function toCp1251(str) {
 function buildCleanupMacro(selectedIds) {
     const groups = classifyNames();
     const prot   = protectedNames();
-    const file   = (APP.books[0] || {}).fileName || 'книга';
+    const file   = (scopeBook() || {}).fileName || 'книга';
     const total  = groups.reduce((a, g) => a + g.names.length, 0);
     const toKill = groups.filter(g => selectedIds.indexOf(g.group.id) !== -1)
                          .reduce((a, g) => a + g.names.length, 0);
@@ -5193,8 +5327,8 @@ const IMPACT = {
    человек знает про свою книгу больше, чем REX может прочитать. */
 function impactCaveats() {
     const out = [];
-    const anyBook = f => APP.books.some(f);
-    const invisibleCells = APP.books.reduce((a, b) =>
+    const anyBook = f => scopedBooks().some(f);
+    const invisibleCells = scopedBooks().reduce((a, b) =>
         a + (b.sheets || []).reduce((x, s) => x + (s.invisible || []).length, 0), 0);
     if (invisibleCells) out.push({ id: 'indirect', scope: ['sheet', 'name', 'table'],
         title: 'ДВССЫЛ / СМЕЩ в формулах — ' + fmtNum(invisibleCells) + ' шт.',
@@ -5208,7 +5342,7 @@ function impactCaveats() {
     if (anyBook(b => (b.externalLinks || []).length)) out.push({ id: 'ext', scope: ['sheet', 'name', 'table'],
         title: 'Книга связана с другими файлами',
         text: 'Связь видно только с этой стороны. Другие книги могут ссылаться сюда, и такие ссылки в этом файле не хранятся.' });
-    const cut = APP.books.reduce((a, b) => a + (b.sheets || []).filter(s => s.truncated).length, 0);
+    const cut = scopedBooks().reduce((a, b) => a + (b.sheets || []).filter(s => s.truncated).length, 0);
     if (cut) out.push({ id: 'big', scope: ['sheet', 'name', 'table', 'query', 'pivot', 'modeltable', 'measure'],
         title: 'Слишком большие листы: ' + cut + ' — формулы в них не разбирались',
         text: 'Лист такого размера REX пропускает целиком, чтобы не повесить браузер. Ссылки из его формул не учтены ни для одного объекта.' });
@@ -5610,7 +5744,7 @@ function refChips(refs, limit) {
 /** Лист, по которому идёт разбор: выбранный в списке или первый подходящий. */
 function colSheet() {
     const all = [];
-    APP.books.forEach((b, bi) => (b.sheets || []).forEach(sh => all.push({ bi, sh })));
+    APP.books.forEach((b, bi) => inScope(bi) && (b.sheets || []).forEach(sh => all.push({ bi, sh })));
     const key = APP.colSheet;
     const found = all.find(x => x.bi + '|' + x.sh.name === key);
     if (found) return found;
@@ -5621,7 +5755,7 @@ function colSheet() {
 
 function renderColumns() {
     const all = [];
-    APP.books.forEach((b, bi) => (b.sheets || []).forEach(sh => all.push({ bi, sh })));
+    APP.books.forEach((b, bi) => inScope(bi) && (b.sheets || []).forEach(sh => all.push({ bi, sh })));
     const sel = $('#col-sheet');
     const cur = colSheet();
     sel.innerHTML = all.map(x => {
@@ -5940,7 +6074,7 @@ function renderCleanup() {
 
     // Обращение к имени из кода VBA — единственная ссылка, которую нельзя увидеть
     // в файле: имя там лежит строкой внутри сжатого модуля. Молчать об этом нельзя.
-    const withVba = APP.books.filter(b => b.vba).length;
+    const withVba = [scopeBook()].filter(b => b && b.vba).length;
     $('#cleanup-vba').hidden = !withVba;
     if (withVba) {
         $('#cleanup-vba').innerHTML = '<b>В книге есть макросы VBA.</b> Код может обращаться к имени ' +
@@ -5978,6 +6112,14 @@ function renderCleanup() {
                          .reduce((a, g) => a + g.names.length, 0);
     $('#cleanup-sum').textContent = 'скрытых имён ' + fmtNum(total) +
         ' · выбрано к удалению ' + fmtNum(picked);
+
+    // Макрос всегда пишется под один файл, поэтому при двух книгах говорим,
+    // под какой именно: область «все книги» здесь молча берёт первую.
+    const cb = scopeBook();
+    $('#cleanup-book').innerHTML = APP.books.length > 1 && cb
+        ? 'Макрос собран для книги <b>' + esc(cb.fileName) + '</b>' +
+          (APP.scope == null ? ' (область — «все книги», взята первая)' : '') + '.'
+        : '';
 
     const prot = protectedNames();
     $('#cleanup-protect').textContent = prot.length
@@ -6045,7 +6187,7 @@ function buildMarkdown() {
     APP.health.cats.forEach(c => L.push('- ' + c + ': ' + APP.health.scores[c]));
     L.push('');
 
-    APP.books.forEach(b => {
+    scopedBooks().forEach(b => {
         const p = b.props || {};
         L.push('## ' + b.fileName);
         L.push('');
@@ -6106,7 +6248,7 @@ function buildMarkdown() {
 
     L.push('## Находки аудита');
     L.push('');
-    APP.issues.forEach(i => {
+    scopedIssues().forEach(i => {
         L.push('### [' + SEV[i.severity].label + '] ' + i.title + ' — ' + i.count);
         L.push('');
         L.push(i.desc);
@@ -6173,7 +6315,10 @@ function cyElements() {
     // «Только то, что ни на что не влияет»: на холсте остаются объекты, из
     // которых никто не читает данные, — те самые острова, ради которых сюда идут
     const deadOnly = $('#opt-dead').checked;
-    const typeOk = n => (n.isParent || !APP.typeFilter || APP.typeFilter.has(n.type)) &&
+    // Область просмотра действует и здесь: узлы носят номер книги с постройки
+    // графа, поэтому фильтруем по нему, а не пересобираем граф на каждый выбор.
+    const typeOk = n => inScope(n.bookIdx) &&
+        (n.isParent || !APP.typeFilter || APP.typeFilter.has(n.type)) &&
         (!deadOnly || n.isParent || ['none', 'maybe'].indexOf(impactOf(n.id).level) !== -1);
     const allowed = new Set(APP.graph.nodes.filter(typeOk).map(n => n.id));
 
@@ -7455,6 +7600,24 @@ function initEvents() {
     });
     $('#btn-imp-csv').onclick = () => download('REX_план_очистки.csv', impactCSV(), 'text/csv;charset=utf-8');
 
+    /* Выбор книги. Меняет только область просмотра — книги остаются
+       разобранными, граф не пересобирается, поэтому переключение мгновенное. */
+    $('#scope-select').addEventListener('change', e => {
+        const v = e.target.value;
+        APP.scope = v === 'all' ? null : Number(v);
+        // Выбор листа и разбор колонок относятся к прежней книге
+        APP.sheetScope = null; APP.colSheet = null; APP.impactCache = null;
+        APP.cleanupGroups = null; APP.cleanupPick = null;
+        renderAll();
+        if (APP.graph.nodes.length) scheduleGraph();
+    });
+
+    /* Убрать книгу. Список перерисовывается целиком, поэтому слушаем контейнер. */
+    $('#loaded-list').addEventListener('click', e => {
+        const btn = e.target.closest('[data-drop]');
+        if (btn) dropBook(Number(btn.dataset.drop));
+    });
+
     $('#cleanup-groups').addEventListener('change', e => {
         const cb = e.target.closest('input[data-group]');
         if (!cb) return;
@@ -7669,20 +7832,20 @@ function initEvents() {
     $('#btn-export-json').onclick = () => download('rex-graph.json', JSON.stringify({
         generator: APP_NAME + ' v' + APP_VERSION,
         generated: new Date().toISOString(),
-        books: APP.books.map(b => ({ file: b.fileName, format: b.format, size: b.size, sheets: b.sheets.length })),
+        books: scopedBooks().map(b => ({ file: b.fileName, format: b.format, size: b.size, sheets: b.sheets.length })),
         nodes: APP.graph.nodes.map(n => ({ id: n.id, type: n.type, label: n.label, role: n.role || null })),
         edges: APP.graph.edges.map(e => ({ from: e.source, to: e.target, type: e.type, count: e.count, guess: !!e.guess })),
         health: APP.health,
     }, null, 2), 'application/json');
     $('#btn-export-csv').onclick = () => {
         const rows = [['Важность', 'Категория', 'Правило', 'Объект', 'Подробности']];
-        APP.issues.forEach(i => i.items.forEach(it => rows.push([SEV[i.severity].label, i.category, i.title, it.loc, it.txt])));
+        scopedIssues().forEach(i => i.items.forEach(it => rows.push([SEV[i.severity].label, i.category, i.title, it.loc, it.txt])));
         const csv = '﻿' + rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(';')).join('\r\n');
         download('rex-findings.csv', csv, 'text/csv');
     };
     $('#btn-export-m').onclick = () => {
         const parts = [];
-        APP.books.forEach(b => (b.queries || []).forEach(q => { parts.push('// ═══ ' + q.name + ' ═══'); parts.push(q.code + ';'); parts.push(''); }));
+        scopedBooks().forEach(b => (b.queries || []).forEach(q => { parts.push('// ═══ ' + q.name + ' ═══'); parts.push(q.code + ';'); parts.push(''); }));
         download('power-query.m', parts.join('\n'), 'text/plain');
     };
 
