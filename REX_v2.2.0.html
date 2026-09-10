@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.1.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.2.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -705,6 +705,11 @@ tr.row-link { cursor: pointer; }
     font-size: 10.5px; font-weight: 700; color: var(--primary); text-transform: none; letter-spacing: 0;
 }
 .lg-marks { display: flex; flex-direction: column; gap: 8px; margin-top: 5px; }
+.lg-diff { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-light); font-size: 11px; line-height: 1.5; }
+.lg-diff .lgd-head { font-weight: 800; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+.lg-diff .lgd-row { display: flex; align-items: center; gap: 7px; padding: 2px 0; }
+.lg-diff .lgd-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+.lg-diff .lgd-gone { margin-top: 6px; color: var(--text-muted); overflow-wrap: anywhere; }
 .lg-mark { font-size: 11px; line-height: 1.5; }
 .lg-mark > b { display: block; color: var(--text-secondary); font-weight: 700; margin-bottom: 3px; }
 .lg-mtypes { display: flex; flex-direction: column; gap: 2px; }
@@ -1247,6 +1252,7 @@ table.matrix td.cell[data-n] { cursor: default; }
             <label class="chk" title="Объекты, у которых нет ни одной связи на графе"><input type="checkbox" id="opt-orphans" checked> Показывать несвязанные</label>
             <label class="chk" title="INDIRECT/OFFSET и подобные — ссылки, которые собираются во время расчёта"><input type="checkbox" id="opt-invisible" checked> «Невидимые» связи</label>
             <label class="chk" title="Оставить на холсте только объекты, из которых никто не читает данные"><input type="checkbox" id="opt-dead"> Только «ни на что не влияет»</label>
+            <label class="chk" id="opt-diff-wrap" hidden title="Пометить объекты, которые отличаются от второй загруженной версии"><input type="checkbox" id="opt-diff"> <b>Отличия от второй версии</b></label>
             <div style="flex:1"></div>
             <button class="btn btn-outline btn-sm" id="btn-graph-fit" title="Вписать в экран">
                 <svg viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/></svg>
@@ -1278,6 +1284,7 @@ table.matrix td.cell[data-n] { cursor: default; }
                     <div class="lg-scroll">
                         <div class="lg-title lg-title-types">Типы связей · цвет не действует</div>
                         <div class="lg-edges" id="lg-edges"></div>
+                        <div class="lg-diff" id="lg-diff" hidden></div>
                         <div class="lg-focus" id="lg-focus" hidden></div>
                         <div class="lg-sub">
                             <button class="lg-more" id="lg-more" aria-expanded="false">Схема связей типов ▾</button>
@@ -1590,7 +1597,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.1.1';
+const APP_VERSION = '2.2.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1611,6 +1618,7 @@ const APP = {
     impactIgnore: null,     // оговорки, снятые вручную
     impactCache: null,      // разбор влияния — пересчитывается при смене оговорок
     scope: null,            // какую книгу показывать: null — все, иначе индекс в books
+    diffOnGraph: false,     // помечать на графе отличия от второй версии
 };
 
 /* ───────────────────────── область просмотра ─────────────────────────
@@ -4021,6 +4029,18 @@ function renderBadges() {
         el.hidden = false; el.textContent = val;
         el.className = 'nav-badge' + (cls ? ' ' + cls : '');
     };
+    /* Режим различий требует пары и выбранной книги. При «всех книгах сразу»
+       сравнивать нечего: на холсте уже обе версии. */
+    const dw = $('#opt-diff-wrap'), dc = $('#opt-diff');
+    const парой = APP.books.length === 2 && APP.scope != null;
+    dw.hidden = APP.books.length !== 2;
+    dc.disabled = !парой;
+    dw.style.opacity = парой ? 1 : .45;
+    dw.title = парой
+        ? 'Пометить объекты, которые отличаются от второй загруженной версии'
+        : 'Выберите одну книгу в «Разбираем файл»: в режиме «все книги сразу» на холсте уже обе версии';
+    if (!парой && dc.checked) { dc.checked = false; APP.diffOnGraph = false; }
+
     // Группировка по книгам осмысленна только при нескольких файлах — иначе это мёртвый переключатель
     const grp = $('#opt-groups');
     grp.disabled = APP.books.length < 2;
@@ -5484,12 +5504,15 @@ const fld = (поле, a, b, fmt) => (a === b || (a == null && b == null)) ? nul
 function diffSet(oldArr, newArr, key, title, cmp) {
     const A = byKey(oldArr, key), B = byKey(newArr, key);
     const rows = [];
-    A.forEach((x, k) => { if (!B.has(k)) rows.push({ вид: 'del', что: title(x) }); });
+    // Кроме подписи строка несёт сам объект: по нему режим различий на графе
+    // находит узел (идентификаторы устроены как «s:<книга>:<имя>»). Иначе
+    // пришлось бы разбирать обратно готовую строку «Лист «Бюджет»».
+    A.forEach((x, k) => { if (!B.has(k)) rows.push({ вид: 'del', что: title(x), объект: x }); });
     B.forEach((y, k) => {
         const x = A.get(k);
-        if (!x) return rows.push({ вид: 'add', что: title(y) });
+        if (!x) return rows.push({ вид: 'add', что: title(y), объект: y });
         const d = (cmp ? cmp(x, y) : []).filter(Boolean);
-        if (d.length) rows.push({ вид: 'chg', что: title(y), детали: d });
+        if (d.length) rows.push({ вид: 'chg', что: title(y), детали: d, объект: y });
     });
     return rows;
 }
@@ -5542,7 +5565,8 @@ function diffFormulas(a, b) {
             const kb = (COL_KINDS[(CB.get(col) || {}).kind] || {}).label;
             const k = fld('состояние колонки', ka, kb);
             if (k) детали.push(k);
-            rows.push({ вид: g.изменено.length ? 'chg' : g.добавлено.length ? 'add' : 'del',
+            rows.push({ лист: sa.name,
+                вид: g.изменено.length ? 'chg' : g.добавлено.length ? 'add' : 'del',
                 что: '«' + sa.name + '» · колонка ' + col + (шапка ? ' — ' + шапка : ''), детали });
         });
     });
@@ -5660,11 +5684,14 @@ function diffBooks(a, b) {
         diffSet(a.externalLinks, b.externalLinks, l => l.path, l => l.path));
 
     const ma = a.model || {}, mb = b.model || {};
+    // Меры и таблицы модели — разные типы узлов на графе, помечаем строки,
+    // иначе режим различий не поймёт, какой идентификатор собирать.
     const модель = diffSet(ma.measures, mb.measures, m => m.name, m => 'Мера «' + m.name + '»')
+        .map(r => Object.assign(r, { узелТип: 'measure' }))
         .concat(diffSet(ma.tables, mb.tables, t => t.name, t => 'Таблица модели «' + t.name + '»', (x, y) => [
             fld('колонок', (x.columns || []).length, (y.columns || []).length),
             fld('колонки', (x.columns || []).join(', '), (y.columns || []).join(', ')),
-        ]));
+        ]).map(r => Object.assign(r, { узелТип: 'modeltable' })));
     add('model', 'Модель данных', 'имена мер и таблиц, видимые через кеши сводных', модель);
 
     const бинарь = [];
@@ -5690,6 +5717,130 @@ function diffBooks(a, b) {
 
     const всего = разделы.reduce((s, r) => s + r.строки.filter(x => x.вид !== 'same').length, 0);
     return { разделы, всего, части, оговорки: diffBlindSpots(a, b) };
+}
+
+/* ─────────────── РЕЖИМ РАЗЛИЧИЙ НА ГРАФЕ ───────────────
+
+   Граф из двух книг сразу для двух версий одного файла нечитаем: связей между
+   версиями нет, раскладке нечем их развести, и она кладёт оба графа друг на
+   друга. Подсветка по той же причине не переходит с объекта на его двойника.
+
+   Поэтому различия показываем на графе ОДНОЙ книги: узлы, которые отличаются
+   от второй версии, помечаются прямо там, где смотрят связи.
+
+   Пометки берём из того же diffBooks, что рисует «Сравнение версий», — иначе
+   две страницы начали бы расходиться в показаниях. */
+
+/** Как из объекта раздела сравнения получить узел графа выбранной книги.
+    Идентификаторы собираются в buildGraph; схемы обязаны совпадать. */
+const DIFF_NODE = {
+    sheets: (o, bi) => 's:' + bi + ':' + o.name,
+    names:  (o, bi) => 'n:' + bi + ':' + o.name,
+    tables: (o, bi) => 't:' + bi + ':' + o.name,
+    pq:     (o, bi) => 'q:' + bi + ':' + o.name,
+    pivots: (o, bi) => 'p:' + bi + ':' + (o.sheet || '') + ':' + o.name,
+    ext:    (o, bi) => 'x:' + bi + ':' + o.index,
+    model:  (o, bi, r) => (r.узелТип === 'measure' ? 'm:' : 'mt:') + bi + ':' + o.name,
+};
+
+/** Пометки для книги bi в сравнении со второй книгой пары.
+    Map<идУзла, 'add'|'chg'|'del'> плюс счётчики и имя пары.
+
+    Вид не переворачиваем: он всегда описывает переход от ранней книги к
+    поздней. На холст попадает только та пометка, чей узел в этой книге
+    существует, — поэтому на новой версии видно «появился», а на старой
+    «исчезнет». Это и нужно: сообщение зависит от того, что открыто. */
+function diffMarks(bi) {
+    const пусто = { marks: new Map(), сч: { add: 0, chg: 0, del: 0 },
+                    пара: null, сторона: null, пропало: [], появилось: [] };
+    if (APP.books.length !== 2 || bi == null || !APP.books[bi]) return пусто;
+    const другая = bi === 0 ? 1 : 0;
+
+    const ia = Math.min(bi, другая), ib = Math.max(bi, другая);
+    const d = diffBooks(APP.books[ia], APP.books[ib]);
+
+    const marks = new Map();
+    const сч = { add: 0, chg: 0, del: 0 };
+    // Сторона важна: глядя на позднюю версию, удалённое здесь не существует —
+    // узла нет и быть не может. Такие объекты перечисляем в легенде отдельно,
+    // иначе погашенная пометка читалась бы как «ничего не удаляли».
+    const поздняя = bi === ib;
+    const пропало = [], появилось = [];
+    const внеГрафа = (r) => {
+        if (поздняя && r.вид === 'del') пропало.push(r.что);
+        if (!поздняя && r.вид === 'add') появилось.push(r.что);
+    };
+    const пометить = (id, вид) => {
+        if (!id || !APP.graph.index.has(id)) return;
+        // «Изменился» не затирает «появился»: появление — утверждение сильнее.
+        const было = marks.get(id);
+        if (было === 'add' || было === 'del') return;
+        if (было) сч[было]--;
+        сч[вид]++;
+        marks.set(id, вид);
+    };
+
+    d.разделы.forEach(раздел => {
+        if (раздел.ключ === 'cols') {
+            // Правка в ячейках — это изменение листа: своего узла у колонки нет
+            раздел.строки.forEach(r => { if (r.лист) пометить('s:' + bi + ':' + r.лист, 'chg'); });
+            return;   // у колонки нет своего объекта — перечислять нечего
+        }
+        const мк = DIFF_NODE[раздел.ключ];
+        if (!мк) return;
+        раздел.строки.forEach(r => {
+            if (!r.объект || r.вид === 'same') return;
+            внеГрафа(r);
+            пометить(мк(r.объект, bi, r), r.вид);
+        });
+    });
+    return { marks, сч, пропало, появилось,
+             пара: APP.books[другая].fileName, сторона: поздняя ? 'поздняя' : 'ранняя' };
+}
+
+/** Пометки для текущей области, или пустышка, если режим выключен. */
+function activeDiffMarks() {
+    if (!APP.diffOnGraph || APP.scope == null || APP.books.length !== 2) {
+        return { marks: new Map(), сч: { add: 0, chg: 0, del: 0 },
+                 пара: null, сторона: null, пропало: [], появилось: [] };
+    }
+    return diffMarks(APP.scope);
+}
+
+/** Легенда режима различий. Кроме расшифровки цветов честно перечисляет то,
+    чего на холсте быть не может: объект, удалённый во второй версии, в этой
+    книге не существует, узла у него нет — и наоборот. Иначе выключенная
+    пометка читалась бы как «изменений такого рода не было». */
+function renderDiffLegend() {
+    const box = $('#lg-diff');
+    if (!box) return;
+    const d = activeDiffMarks();
+    if (!d.пара) { box.hidden = true; return; }
+    box.hidden = false;
+
+    const ЦВЕТ = { add: '#15803d', chg: '#b45309', del: '#b91c1c' };
+    const ПОДПИСЬ = { add: 'появился', chg: 'изменился', del: 'исчезнет' };
+    const строки = ['add', 'chg', 'del'].filter(k => d.сч[k]).map(k =>
+        '<div class="lgd-row"><span class="lgd-dot" style="background:' + ЦВЕТ[k] + '"></span>' +
+        ПОДПИСЬ[k] + ' <b>' + fmtNum(d.сч[k]) + '</b></div>').join('');
+
+    // Объекты другой стороны: на этой книге узлов у них нет
+    const нет = d.сторона === 'поздняя' ? d.пропало : d.появилось;
+    const ярлык = d.сторона === 'поздняя' ? 'Исчезло в этой версии' : 'Появится во второй версии';
+
+    box.innerHTML =
+        '<div class="lgd-head">Отличия от ' + esc(d.пара) + '</div>' +
+        (строки || '<div class="lgd-row">различий среди объектов графа нет</div>') +
+        // На общем плане помеченные узлы приходится выискивать глазами — даём
+        // перейти к ним одним нажатием, как «Вписать», но только по отличиям.
+        (d.сч.add + d.сч.chg + d.сч.del
+            ? '<button class="lg-more" id="lg-diff-fit" style="margin-top:6px">Показать отличия ▸</button>'
+            : '') +
+        (нет && нет.length
+            ? '<div class="lgd-gone"><b>' + ярлык + ':</b> ' + fmtNum(нет.length) + ' — ' +
+              esc(нет.slice(0, 6).join(', ')) + (нет.length > 6 ? ' и ещё ' + fmtNum(нет.length - 6) : '') +
+              '<br>Узлов у них здесь нет: полный разбор — в «Сравнении версий».</div>'
+            : '');
 }
 
 /* ─────────────── РАЗБОР ПО КОЛОНКАМ ─────────────── */
@@ -6312,7 +6463,10 @@ function deriveInvisibleEdges(graph, books) {
 }
 
 function cyElements() {
-    const groups = $('#opt-groups').checked && APP.books.length > 1;
+    // Рамка нужна, только когда на холсте правда несколько книг. Раньше условие
+    // смотрело на число загруженных, и при выборе одной книги из двух вокруг
+    // всего графа появлялась рамка, которая ничего не разделяет.
+    const groups = $('#opt-groups').checked && scopedBooks().length > 1;
     const showOrphans = $('#opt-orphans').checked;
     const showInvisible = $('#opt-invisible').checked;
 
@@ -6343,6 +6497,10 @@ function cyElements() {
     });
     const present = new Set(nodes.map(n => n.id));
 
+    // Пометки различий считаем один раз на сборку элементов, а не на узел:
+    // diffBooks поячеечно сверяет формулы и на больших книгах стоит заметно.
+    const дифф = activeDiffMarks().marks;
+
     return [
         ...nodes.map(n => ({
             data: {
@@ -6359,7 +6517,7 @@ function cyElements() {
                       (n.type === 'extbook' && n.ref && n.ref.local) ? 1 : 0,
                 hidden: n.type === 'sheet' && n.state && n.state !== 'visible' ? 1 : 0,
             },
-            classes: n.isParent ? 'parent' : '',
+            classes: (n.isParent ? 'parent' : '') + (дифф.has(n.id) ? ' dm-' + дифф.get(n.id) : ''),
         })).map(el => {
             // Иконку собираем после пометок: обводка вшивается в саму картинку,
             // потому что бордюр Cytoscape умеет только прямоугольный.
@@ -6691,6 +6849,16 @@ function renderGraph() {
                 }, v.dash === 'dashed' ? { 'line-dash-pattern': [6, 3] } : {},
                    v.arrow ? {} : { 'target-arrow-shape': 'none' }),
             })),
+
+            /* Пометки различий. Подложка, а не рамка: рамка узла уже занята —
+               красная означает ошибки внутри, пунктирная скрытый лист. Цвета те
+               же, что на «Сравнении версий», чтобы не заводить второй словарь. */
+            { selector: 'node.dm-add', style: {
+                'underlay-color': '#15803d', 'underlay-opacity': .3, 'underlay-padding': 9 } },
+            { selector: 'node.dm-chg', style: {
+                'underlay-color': '#b45309', 'underlay-opacity': .3, 'underlay-padding': 9 } },
+            { selector: 'node.dm-del', style: {
+                'underlay-color': '#b91c1c', 'underlay-opacity': .3, 'underlay-padding': 9 } },
 
             { selector: '.faded', style: { 'opacity': .12, 'text-opacity': .05 } },
             // Объявлено ПОСЛЕ .faded намеренно: в cytoscape побеждает последнее
@@ -7383,6 +7551,8 @@ function buildLegend() {
     $('#lg-marks-box').hidden = !marks.length;
     $('#lg-marks').innerHTML = marks.join('');
 
+    renderDiffLegend();
+
     /* ── схема связей типов. Плоский перечень «кто с кем» читался как груда:
           у восьми типов по три-четыре соседа, и глазу не за что зацепиться.
           Поэтому здесь не перечень, а поток данных книги: сверху источники,
@@ -7610,6 +7780,13 @@ function initEvents() {
     });
     $('#btn-imp-csv').onclick = () => download('REX_план_очистки.csv', impactCSV(), 'text/csv;charset=utf-8');
 
+    /* Режим различий. Смысл имеет только когда загружены ровно две книги и
+       выбрана одна из них: сравнивать книгу не с чем, если пара не сложилась. */
+    $('#opt-diff').addEventListener('change', e => {
+        APP.diffOnGraph = e.target.checked;
+        renderGraph();
+    });
+
     /* Выбор книги. Меняет только область просмотра — книги остаются
        разобранными, граф не пересобирается, поэтому переключение мгновенное. */
     $('#scope-select').addEventListener('change', e => {
@@ -7665,6 +7842,16 @@ function initEvents() {
         APP.showHiddenNames = !APP.showHiddenNames;
         renderSheets();
     };
+    /* Переход к помеченным узлам. Слушаем контейнер: легенда перерисовывается
+       целиком, и повешенный на кнопку обработчик пропал бы вместе с ней. */
+    $('#lg-diff').addEventListener('click', e => {
+        if (!e.target.closest('#lg-diff-fit')) return;
+        const cy = window.__cy;
+        if (!cy) return;
+        const m = cy.nodes('.dm-add, .dm-chg, .dm-del');
+        if (m.length) cy.animate({ fit: { eles: m, padding: 140 } }, { duration: 350 });
+    });
+
     $('#lg-marks-more').onclick = () => {
         const m = $('#lg-marks'), b = $('#lg-marks-more');
         m.hidden = !m.hidden;
