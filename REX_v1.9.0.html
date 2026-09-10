@@ -791,6 +791,13 @@ tr.row-link { cursor: pointer; }
     .graph-details { width: 100%; max-height: 46vh; }
 }
 
+.dz-add {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px;
+    padding: 11px 15px; border: 1px dashed var(--border); border-radius: var(--radius);
+    background: var(--card); font-size: 13px; color: var(--text-secondary); font-weight: 600;
+}
+.dz-add .btn { margin-left: auto; }
+
 /* ═══════════════════ СРАВНЕНИЕ ВЕРСИЙ ═══════════════════ */
 .diff-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; font-weight: 600; }
 .diff-pick label { display: flex; align-items: center; gap: 7px; color: var(--text-secondary); }
@@ -1116,6 +1123,12 @@ table.matrix td.cell[data-n] { cursor: default; }
     <div class="progress-box" id="progress-box">
         <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
         <div class="progress-log" id="progress-log"></div>
+    </div>
+
+    <div class="dz-add" id="dz-add" hidden>
+        <span>Нужно сравнить две версии? Добавьте вторую книгу — первая останется загруженной.</span>
+        <button class="btn btn-outline btn-sm" id="btn-add-book">Добавить книгу</button>
+        <input type="file" id="file-add" multiple accept=".xlsx,.xlsm,.xlsb,.xls,.xltx,.xltm" hidden>
     </div>
 
     <div id="loaded-list" style="margin-top:16px"></div>
@@ -3766,14 +3779,22 @@ function summarizeModel(book) {
     };
 }
 
-async function loadFiles(fileList) {
+/**
+ * @param append true — дописать книгу к уже разобранным, а не начинать заново.
+ *        Нужно для сравнения версий: открыли v5, посмотрели, потом добавили v7.
+ *        Обычная загрузка остаётся замещающей — иначе список книг незаметно
+ *        распухал бы от каждого просмотра.
+ */
+let bookSeq = 0;                 // сквозная нумерация книг: id не должны повторяться
+
+async function loadFiles(fileList, append) {
     const files = Array.from(fileList);
     if (!files.length) return;
 
     $('#progress-box').classList.add('on');
-    $('#progress-log').innerHTML = '';
+    if (!append) $('#progress-log').innerHTML = '';
     setProgress(2);
-    APP.books = [];
+    if (!append) { APP.books = []; bookSeq = 0; }
     APP.cleanupPick = null;   // у новой книги свой набор групп — старый выбор к ней не относится
 
     for (let fi = 0; fi < files.length; fi++) {
@@ -3788,7 +3809,7 @@ async function loadFiles(fileList) {
             const bytes = new Uint8Array(await file.arrayBuffer());
             const format = detectFormat(bytes, file.name);
             const book = {
-                id: 'b' + fi, fileName: file.name, size: file.size, format,
+                id: 'b' + (bookSeq++), fileName: file.name, size: file.size, format,
                 sheets: [], tables: [], names: [], connections: [], queries: [],
                 pivots: [], pivotCaches: [], queryTables: [], externalLinks: [],
                 props: {}, calc: { mode: 'auto', iterate: false },
@@ -3838,7 +3859,8 @@ async function loadFiles(fileList) {
 
     renderAll();
     unlockPages();
-    goPage('overview');
+    // Книгу дописывают ровно затем, чтобы сравнить: незачем сначала кидать в «Обзор»
+    goPage(append && APP.books.length > 1 ? 'diff' : 'overview');
     showNotification('Разбор завершён: ' + APP.graph.nodes.length + ' объектов, ' + APP.graph.edges.length + ' связей', 'success', 4500);
 }
 
@@ -3919,6 +3941,7 @@ function renderBadges() {
 
 function renderLoadedList() {
     const el = $('#loaded-list');
+    $('#dz-add').hidden = !APP.books.length;
     if (!APP.books.length) { el.innerHTML = ''; return; }
     el.innerHTML = '<div class="card"><div class="card-title">Загружено</div>' +
         APP.books.map(b => {
@@ -5665,9 +5688,10 @@ function diffPair() {
 function renderDiff() {
     const box = $('#diff-content');
     if (APP.books.length < 2) {
-        box.innerHTML = '<div class="card"><div class="empty-state">Загружено меньше двух книг. ' +
-            'Откройте обе версии сразу — на вкладке «Загрузка» можно выбрать несколько файлов, ' +
-            'и REX сравнит их между собой.</div></div>';
+        box.innerHTML = '<div class="card"><div class="empty-state">Загружена одна книга. ' +
+            'Добавьте вторую версию — разобранная останется на месте.<br>' +
+            '<button class="btn btn-outline btn-sm" data-add-book="1" style="margin-top:12px">' +
+            'Добавить вторую версию</button></div></div>';
         $('#diff-sum').textContent = '';
         return;
     }
@@ -7211,6 +7235,12 @@ function initEvents() {
     dz.onclick = () => fi.click();
     dz.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fi.click(); } };
     fi.onchange = e => { if (e.target.files.length) loadFiles(e.target.files); fi.value = ''; };
+    const fa = $('#file-add');
+    const добавить = () => fa.click();
+    $('#btn-add-book').onclick = добавить;
+    fa.onchange = e => { if (e.target.files.length) loadFiles(e.target.files, true); fa.value = ''; };
+    // Кнопка из пустого состояния сравнения ведёт к тому же выбору файла
+    document.addEventListener('click', e => { if (e.target.closest('[data-add-book]')) добавить(); });
     ['dragenter', 'dragover'].forEach(t => dz.addEventListener(t, e => { e.preventDefault(); dz.classList.add('dragover'); }));
     ['dragleave', 'drop'].forEach(t => dz.addEventListener(t, e => { e.preventDefault(); dz.classList.remove('dragover'); }));
     dz.addEventListener('drop', e => { if (e.dataTransfer.files.length) loadFiles(e.dataTransfer.files); });
