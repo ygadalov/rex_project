@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.8.2 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.9.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -791,6 +791,49 @@ tr.row-link { cursor: pointer; }
     .graph-details { width: 100%; max-height: 46vh; }
 }
 
+/* ═══════════════════ СРАВНЕНИЕ ВЕРСИЙ ═══════════════════ */
+.diff-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; font-weight: 600; }
+.diff-pick label { display: flex; align-items: center; gap: 7px; color: var(--text-secondary); }
+.diff-pick select {
+    font-family: inherit; font-size: 13px; font-weight: 600; color: var(--text);
+    padding: 6px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+    max-width: 260px;
+}
+.diff-arrow { color: var(--text-muted); font-size: 16px; }
+.diff-sum { margin-left: auto; font-size: 12.5px; color: var(--text-secondary); font-weight: 600; }
+.diff-sum b { color: var(--text); }
+
+.diff-note { display: flex; gap: 9px; align-items: flex-start; font-size: 12.5px; line-height: 1.5; color: #78350f; }
+.diff-note svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2; fill: none; flex-shrink: 0; margin-top: 2px; }
+.diff-note ul { margin: 0; padding-left: 17px; }
+.diff-note li { margin-bottom: 3px; }
+
+.diff-row { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border-light); }
+.diff-row:last-child { border-bottom: none; }
+.diff-mark {
+    flex-shrink: 0; width: 74px; font-size: 10px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: .4px; padding-top: 2px;
+}
+.diff-mark.add  { color: #15803d; }
+.diff-mark.del  { color: #b91c1c; }
+.diff-mark.chg  { color: #b45309; }
+.diff-mark.same { color: var(--text-muted); }
+.diff-body { min-width: 0; flex: 1; }
+.diff-what { font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }
+.diff-fields { margin-top: 4px; display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 2px 10px; font-size: 12px; }
+.diff-fields dt { color: var(--text-muted); font-weight: 600; }
+.diff-fields dd { margin: 0; overflow-wrap: anywhere; }
+.diff-was { color: #b91c1c; }
+.diff-now { color: #15803d; }
+.diff-sep { color: var(--text-muted); margin: 0 5px; }
+.diff-code {
+    display: block; font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    background: var(--border-light); border-radius: 5px; padding: 3px 6px; margin: 2px 0;
+    overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.diff-more { font-size: 11.5px; color: var(--text-muted); padding: 7px 0 0; }
+.diff-parts { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12.5px; font-weight: 600; }
+
 /* ═══════════════════ ТЕПЛОВАЯ КАРТА ЛИСТА ═══════════════════ */
 .heat-wrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
 .heat-wrap > div:last-child { flex: 1; min-width: 260px; }
@@ -978,6 +1021,13 @@ table.matrix td.cell[data-n] { cursor: default; }
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg></span>
             <span class="nav-label">Обзор</span>
         </button>
+        <!-- Сравнение включается только когда книг загружено две и больше:
+             см. renderBadges(). Иначе пункт вводил бы в заблуждение. -->
+        <button class="nav-item" data-page="diff" role="tab" aria-selected="false" aria-controls="page-diff" disabled>
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h9"/><path d="m10 4 3 3-3 3"/><path d="M20 17h-9"/><path d="m14 14-3 3 3 3"/></svg></span>
+            <span class="nav-label">Сравнение версий</span>
+            <span class="nav-badge" id="badge-diff" hidden></span>
+        </button>
         <button class="nav-item" data-page="graph" role="tab" aria-selected="false" aria-controls="page-graph" disabled>
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 6.8c5 1 6.5 2.6 9 4.4"/><path d="M7.5 17.2c5-1 6.5-2.6 9-4.4"/></svg></span>
             <span class="nav-label">Граф связей</span>
@@ -1108,6 +1158,27 @@ table.matrix td.cell[data-n] { cursor: default; }
         <div class="card-title">Паспорт файла</div>
         <div class="table-box"><table class="wide"><tbody id="overview-props"></tbody></table></div>
     </div>
+</section>
+
+<!-- ═══════════ СРАВНЕНИЕ ВЕРСИЙ ═══════════ -->
+<section class="page-content" id="page-diff" role="tabpanel">
+    <div class="header-top">
+        <h1 class="page-title">Сравнение версий <span class="subtitle">чем одна книга отличается от другой</span></h1>
+        <button class="btn btn-outline btn-sm" id="btn-diff-csv">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Выгрузить отличия
+        </button>
+    </div>
+    <div class="card">
+        <div class="diff-pick">
+            <label>Было <select id="diff-a"></select></label>
+            <span class="diff-arrow">→</span>
+            <label>Стало <select id="diff-b"></select></label>
+            <button class="btn btn-outline btn-sm" id="btn-diff-swap" title="Поменять книги местами">Поменять местами</button>
+            <span class="diff-sum" id="diff-sum"></span>
+        </div>
+    </div>
+    <div id="diff-content"></div>
 </section>
 
 <!-- ═══════════ ГРАФ ═══════════ -->
@@ -1481,7 +1552,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.8.2';
+const APP_VERSION = '1.9.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1607,7 +1678,10 @@ function goPage(page) {
 }
 
 function unlockPages() {
-    $$('.nav-item[disabled]').forEach(b => { b.disabled = false; });
+    $$('.nav-item[disabled]').forEach(b => {
+        if (b.dataset.page === 'diff' && APP.books.length < 2) return;   // нечего сравнивать
+        b.disabled = false;
+    });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1924,6 +1998,13 @@ const COL_MAX_PATTERNS = 8;     // больше в таблице всё рав�
 const COL_HEADER_ROWS  = 60;    // шапку ниже этой строки уже не ищем
 const COL_MIN_FORMULAS = 3;     // две формулы — ещё не колонка
 
+/* Поячеечная карта формул нужна ровно одному потребителю — сравнению версий:
+   без неё правка одной ячейки («коэффициент 1.1 дописали») не видна вовсе,
+   потому что колонка с одной формулой в разбор по колонкам не попадает.
+   Потолок нужен, чтобы лист на сотни тысяч формул не съел память: выше него
+   карта не ведётся, и сравнение честно говорит, что по этому листу оно слепо. */
+const FX_MAX = 40000;
+
 /** Буква колонки по индексу: 0 → A, 27 → AB. */
 function colLetter(c) {
     let s = '';
@@ -1988,6 +2069,8 @@ function scanSheetXml(xml, sheet, sst) {
     const wholeCol  = [];
     const errorCells = [];
     const longest   = [];                // топ самых длинных формул
+    const fx = new Map();                // адрес ячейки → текст формулы (для сравнения версий)
+    let fxOver = false;                  // формул больше FX_MAX — карту не ведём
 
     while ((i = xml.indexOf('<c ', i)) !== -1) {
         const gt = xml.indexOf('>', i);
@@ -2038,6 +2121,10 @@ function scanSheetXml(xml, sheet, sst) {
         if (fText != null) {
             formulas++;
             kind = 3;
+            if (rm) {
+                if (fx.size >= FX_MAX) fxOver = true;
+                else fx.set(rm[1], fText);
+            }
             const s = scanFormula(fText);
             s.sheets.forEach(sh => refsOut.set(sh, (refsOut.get(sh) || 0) + 1));
             s.tables.forEach(t => tableRefs.set(t, (tableRefs.get(t) || 0) + 1));
@@ -2110,6 +2197,7 @@ function scanSheetXml(xml, sheet, sst) {
         cellCount: cells, formulaCount: formulas, constCount: consts, textCount: texts,
         errorCount: errors, errKinds, colStats, refsOut, tableRefs, nameRefs, extRefs, funcs,
         useKinds, invisible, wholeCol, errorCells, longest: longest.slice(0, 20),
+        fx: fxOver ? null : fx, fxOver,
         rows: maxR, cols: maxC, heat: { w: hw, h: hh, data: heat },
         columns: buildColumns(colStats, colHeads),
     });
@@ -2228,6 +2316,54 @@ function parseGeminiModel(zip) {
 }
 
 /** Разбор книги формата OOXML (xlsx/xlsm/xltx, частично xlsb). */
+/* ═══════════════════════════════════════════════════════════════════════════
+   ОГЛАВЛЕНИЕ ZIP: имя части → CRC32 и размер, без распаковки
+
+   Нужно для сравнения версий. У книги есть части, которые REX прочитать не
+   может в принципе: xl/model/item.data (модель Power Pivot) и xl/vbaProject.bin
+   (код VBA) — это закрытые бинарные форматы. Но в оглавлении архива на каждую
+   часть лежит контрольная сумма, посчитанная Excel при сохранении. Сравнив её,
+   мы честно отвечаем «модель менялась / не менялась», не притворяясь, будто
+   знаем, что именно внутри.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * @returns {Map<string, {crc: number, size: number}>|null} null — если оглавление
+ *          не разобралось (zip64, повреждение): тогда сравнение просто обойдётся
+ *          без пофайловых сумм, а не сломается.
+ */
+function zipDirectory(bytes) {
+    try {
+        const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        // EOCD ищем с конца: комментарий архива до 64 КБ
+        let eocd = -1;
+        for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65558); i--) {
+            if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+        }
+        if (eocd < 0) return null;
+        let count = dv.getUint16(eocd + 10, true);
+        let start = dv.getUint32(eocd + 16, true);
+        if (start === 0xffffffff || count === 0xffff) return null;   // zip64 — не наш случай
+
+        const out = new Map();
+        let p = start;
+        for (let i = 0; i < count; i++) {
+            if (p + 46 > bytes.length || dv.getUint32(p, true) !== 0x02014b50) return null;
+            const crc = dv.getUint32(p + 16, true);
+            const size = dv.getUint32(p + 24, true);
+            const nLen = dv.getUint16(p + 28, true);
+            const eLen = dv.getUint16(p + 30, true);
+            const cLen = dv.getUint16(p + 32, true);
+            const name = new TextDecoder('utf-8').decode(bytes.subarray(p + 46, p + 46 + nLen));
+            out.set(name, { crc, size });
+            p += 46 + nLen + eLen + cLen;
+        }
+        return out;
+    } catch (e) {
+        return null;
+    }
+}
+
 async function parseOOXML(bytes, book, log) {
     let zip;
     try {
@@ -2239,6 +2375,7 @@ async function parseOOXML(bytes, book, log) {
     const txt = p => has(p) ? decodePart(zip[p]) : null;
 
     book.zipEntries = Object.keys(zip).length;
+    book.parts = zipDirectory(bytes);       // суммы частей — основа сравнения версий
     book.gemini = parseGeminiModel(zip);
     book.vba = has('xl/vbaProject.bin');
     book.modelRaw = Object.keys(zip).find(k => /^xl\/model\/item\d*\.data$/.test(k)) || null;
@@ -3719,6 +3856,7 @@ function renderAll() {
     renderModel();
     renderQuality();
     renderCleanup();
+    renderDiff();
     renderReport();
     renderBadges();
     /* Граф не рисуем здесь: после разбора открывается «Обзор», а построение
@@ -3767,6 +3905,16 @@ function renderBadges() {
     const safe = (APP.cleanupGroups || [])
         .filter(g => g.group.risk === 'safe').reduce((a, g) => a + g.names.length, 0);
     set('#badge-cleanup', safe ? fmtNum(safe) : null);
+    /* Сравнивать можно только когда есть с чем: при одной книге пункт остаётся
+       выключенным, иначе он обещает то, чего сделать нельзя. */
+    const пар = APP.books.length >= 2;
+    const nav = document.querySelector('.nav-item[data-page="diff"]');
+    if (nav) {
+        nav.disabled = !пар;
+        nav.title = пар ? '' : 'Нужны две книги: откройте обе версии сразу';
+    }
+    set('#badge-diff', пар && APP.diff ? fmtNum(APP.diff.всего) : null,
+        пар && APP.diff && APP.diff.всего ? 'warn' : null);
 }
 
 function renderLoadedList() {
@@ -5072,6 +5220,249 @@ function impactBadge(id) {
 
 
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   СРАВНЕНИЕ ДВУХ ВЕРСИЙ КНИГИ
+
+   Отвечает на вопрос «чем v7 отличается от v5». Сравниваются разобранные
+   книги, а не байты: важно не то, что файл другой, а что в нём поменялось
+   по смыслу — лист, формула в колонке, имя, запрос, сводная.
+
+   Формулы сравниваются по колонкам, а не по ячейкам, и это осознанно.
+   Ячеек в книге десятки тысяч, и построчный список отличий читать невозможно;
+   колонка же — это то, как человек и правит модель: «в колонке H поменяли
+   формулу». Шаблон колонки уже посчитан разбором (buildColumns), в нём номера
+   строк заменены смещениями, поэтому дописанные строки не выдаются за правку.
+
+   Чего сравнение не видит и врать об этом не станет — см. diffBlindSpots().
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const DIFF_ROWS = 80;
+
+const byKey = (arr, key) => {
+    const m = new Map();
+    (arr || []).forEach(x => { const k = key(x); if (k != null && !m.has(k)) m.set(k, x); });
+    return m;
+};
+
+/** Одно отличие поля. null — если не изменилось: удобно фильтровать. */
+const fld = (поле, a, b, fmt) => (a === b || (a == null && b == null)) ? null
+    : { поле, было: fmt ? fmt(a) : a, стало: fmt ? fmt(b) : b };
+
+/**
+ * Общий обход двух наборов по ключу.
+ * @param cmp (было, стало) вернёт массив отличий; пустой массив = объект не менялся
+ */
+function diffSet(oldArr, newArr, key, title, cmp) {
+    const A = byKey(oldArr, key), B = byKey(newArr, key);
+    const rows = [];
+    A.forEach((x, k) => { if (!B.has(k)) rows.push({ вид: 'del', что: title(x) }); });
+    B.forEach((y, k) => {
+        const x = A.get(k);
+        if (!x) return rows.push({ вид: 'add', что: title(y) });
+        const d = (cmp ? cmp(x, y) : []).filter(Boolean);
+        if (d.length) rows.push({ вид: 'chg', что: title(y), детали: d });
+    });
+    return rows;
+}
+
+/**
+ * Формулы: сравниваем поячеечно, показываем сгруппированно по колонкам.
+ *
+ * Поячеечно — потому что иначе правка одной ячейки не видна: колонка с одной
+ * формулой в разбор по колонкам не попадает. Группировкой по колонкам — потому
+ * что протянутая на 300 строк правка это одно решение человека, а не 300 строк
+ * отчёта. В деталях показываем адрес и текст первых трёх ячеек.
+ */
+function diffFormulas(a, b) {
+    const rows = [];
+    const B = byKey(b.sheets, s => s.name);
+    (a.sheets || []).forEach(sa => {
+        const sb = B.get(sa.name);
+        if (!sb) return;                        // лист исчез целиком — это раздел листов
+        if (!sa.fx || !sb.fx) {
+            if (sa.formulaCount !== sb.formulaCount)
+                rows.push({ вид: 'chg', что: 'Лист «' + sa.name + '» — формул слишком много для поячеечной сверки',
+                    детали: [fld('формул', sa.formulaCount, sb.formulaCount, fmtNum)].filter(Boolean) });
+            return;
+        }
+        const адреса = new Set([...sa.fx.keys(), ...sb.fx.keys()]);
+        const поКолонкам = new Map();
+        адреса.forEach(addr => {
+            const x = sa.fx.get(addr), y = sb.fx.get(addr);
+            if (x === y) return;
+            const col = /^[A-Z]+/.exec(addr)[0];
+            let g = поКолонкам.get(col);
+            if (!g) { g = { изменено: [], добавлено: [], удалено: [] }; поКолонкам.set(col, g); }
+            (x == null ? g.добавлено : y == null ? g.удалено : g.изменено).push({ addr, x, y });
+        });
+        const CB = byKey(sb.columns, c => c.letter), CA = byKey(sa.columns, c => c.letter);
+        поКолонкам.forEach((g, col) => {
+            const шапка = (CB.get(col) || CA.get(col) || {}).header || '';
+            const части = [];
+            if (g.изменено.length) части.push('изменено ' + fmtNum(g.изменено.length));
+            if (g.добавлено.length) части.push('добавлено ' + fmtNum(g.добавлено.length));
+            if (g.удалено.length) части.push('удалено ' + fmtNum(g.удалено.length));
+            const детали = [{ поле: 'формул', было: '', стало: части.join(', ') }];
+            // Порядок адресов внутри колонки — по номеру строки, а не как легли в Set
+            const пример = g.изменено.concat(g.добавлено, g.удалено)
+                .sort((p, q) => (+p.addr.replace(/\D/g, '')) - (+q.addr.replace(/\D/g, '')));
+            пример.slice(0, 3).forEach(c => детали.push({
+                поле: c.addr, было: c.x || '', стало: c.y || '(формулы больше нет)', код: true }));
+            if (пример.length > 3) детали.push({ поле: 'и ещё', было: '', стало: fmtNum(пример.length - 3) + ' ячеек' });
+            const ka = (COL_KINDS[(CA.get(col) || {}).kind] || {}).label;
+            const kb = (COL_KINDS[(CB.get(col) || {}).kind] || {}).label;
+            const k = fld('состояние колонки', ka, kb);
+            if (k) детали.push(k);
+            rows.push({ вид: g.изменено.length ? 'chg' : g.добавлено.length ? 'add' : 'del',
+                что: '«' + sa.name + '» · колонка ' + col + (шапка ? ' — ' + шапка : ''), детали });
+        });
+    });
+    return rows;
+}
+
+/** Грубая, но честная сводка по тексту: сколько строк только слева и только справа. */
+function lineDelta(a, b) {
+    const norm = t => String(t || '').split('\n').map(x => x.trim()).filter(Boolean);
+    const A = norm(a), B = norm(b);
+    const count = arr => { const m = new Map(); arr.forEach(l => m.set(l, (m.get(l) || 0) + 1)); return m; };
+    const ca = count(A), cb = count(B);
+    let ушло = 0, пришло = 0;
+    ca.forEach((n, l) => { ушло += Math.max(0, n - (cb.get(l) || 0)); });
+    cb.forEach((n, l) => { пришло += Math.max(0, n - (ca.get(l) || 0)); });
+    const первая = B.find(l => !ca.has(l)) || A.find(l => !cb.has(l)) || '';
+    return { ушло, пришло, первая };
+}
+
+/** Части архива, которые REX прочитать не может: судим по контрольной сумме. */
+function partVerdict(a, b, path) {
+    if (!a.parts || !b.parts) return { есть: null, текст: 'оглавление архива не разобралось' };
+    const x = a.parts.get(path), y = b.parts.get(path);
+    if (!x && !y) return { есть: false, текст: 'нет ни в одной версии' };
+    if (!x) return { есть: true, менялось: true, текст: 'появилась в новой версии, ' + fmtBytes(y.size) };
+    if (!y) return { есть: true, менялось: true, текст: 'исчезла, было ' + fmtBytes(x.size) };
+    if (x.crc === y.crc) return { есть: true, менялось: false, текст: 'не менялась, ' + fmtBytes(y.size) };
+    return { есть: true, менялось: true,
+             текст: 'изменилась, ' + fmtBytes(x.size) + ' → ' + fmtBytes(y.size) };
+}
+
+/** Чего сравнение принципиально не видит. Показывается прямо на странице. */
+function diffBlindSpots(a, b) {
+    const out = [];
+    const модель = partVerdict(a, b, 'xl/model/item.data');
+    if (модель.есть) out.push('Модель Power Pivot лежит в закрытом двоичном виде: выражения мер, связи и ' +
+        'расчётные столбцы REX не читает. Видны только имена мер и таблиц, попавшие в кеши сводных. ' +
+        'По контрольной сумме видно, правили ли модель вообще: здесь она ' + модель.текст + '.');
+    const vba = partVerdict(a, b, 'xl/vbaProject.bin');
+    if (vba.есть) out.push('Код VBA не разбирается. По контрольной сумме видно только, что часть с макросами ' +
+        vba.текст + '.');
+    const много = (a.sheets || []).concat(b.sheets || []).filter(sh => sh.fxOver).map(sh => sh.name);
+    if (много.length) out.push('Формулы сверяются поячеечно, но на листах ' +
+        [...new Set(много)].join(', ') + ' их больше ' + fmtNum(FX_MAX) +
+        ' — там сравнивается только общее число формул.');
+    out.push('Оформление, условное форматирование, ширина колонок и значения в ячейках не сравниваются: ' +
+        'REX их не разбирает.');
+    return out;
+}
+
+/**
+ * Полное сравнение. Разделы идут от крупного к мелкому.
+ * @returns {{разделы: Array, всего: number, части: Object, оговорки: Array}}
+ */
+function diffBooks(a, b) {
+    const разделы = [];
+    const add = (ключ, заголовок, подпись, строки) => {
+        if (строки.length) разделы.push({ ключ, заголовок, подпись, строки });
+    };
+
+    add('sheets', 'Листы', 'добавлены, удалены, изменились по содержимому',
+        diffSet(a.sheets, b.sheets, s => s.name, s => 'Лист «' + s.name + '»', (x, y) => [
+            fld('видимость', x.state === 'visible' ? 'видимый' : 'скрытый',
+                             y.state === 'visible' ? 'видимый' : 'скрытый'),
+            fld('формул', x.formulaCount, y.formulaCount, fmtNum),
+            fld('констант', x.constCount, y.constCount, fmtNum),
+            fld('ошибок', x.errorCount, y.errorCount, fmtNum),
+            fld('заполнено', x.rows + ' на ' + x.cols, y.rows + ' на ' + y.cols),
+        ]));
+
+    add('cols', 'Формулы', 'поячеечная сверка, сгруппировано по колонкам', diffFormulas(a, b));
+
+    /* Видимые имена перечисляем поимённо, скрытые — только числом: их бывают
+       тысячи, и список из 16 000 строк не сравнение, а свалка. Зато сам факт
+       «скрытых стало на 15 846 меньше» — главная новость после чистки. */
+    const имена = diffSet((a.names || []).filter(n => !n.hidden), (b.names || []).filter(n => !n.hidden),
+        n => n.scope + ' ' + n.name,
+        n => 'Имя «' + n.name + '»' + (n.scope !== 'Книга' ? ', лист «' + n.scope + '»' : ''), (x, y) => [
+            fld('ссылается на', x.ref, y.ref, v => v || '—'),
+            fld('состояние', x.broken ? 'сломано' : 'рабочее', y.broken ? 'сломано' : 'рабочее'),
+        ]);
+    const скрА = (a.names || []).filter(n => n.hidden).length;
+    const скрБ = (b.names || []).filter(n => n.hidden).length;
+    if (скрА !== скрБ) имена.unshift({ вид: 'chg', что: 'Скрытые имена (их не показывает Ctrl+F3)',
+        детали: [fld('всего', скрА, скрБ, fmtNum)] });
+    add('names', 'Именованные диапазоны', 'видимые имена поимённо, скрытые числом', имена);
+
+    add('tables', 'Умные таблицы', 'ListObject: диапазон и состав колонок',
+        diffSet(a.tables, b.tables, t => t.name, t => 'Таблица «' + t.name + '»', (x, y) => [
+            fld('лист', x.sheet, y.sheet),
+            fld('диапазон', x.ref, y.ref),
+            fld('колонок', (x.columns || []).length, (y.columns || []).length),
+            fld('колонки', (x.columns || []).join(', '), (y.columns || []).join(', ')),
+        ]));
+
+    add('pq', 'Power Query', 'M-код сравнивается целиком',
+        diffSet(a.queries, b.queries, q => q.name, q => 'Запрос «' + q.name + '»', (x, y) => {
+            const d = [fld('шагов', (x.steps || []).length, (y.steps || []).length)];
+            if ((x.code || '') !== (y.code || '')) {
+                const l = lineDelta(x.code, y.code);
+                d.push({ поле: 'M-код', было: 'строк убрано: ' + l.ушло, стало: 'строк добавлено: ' + l.пришло });
+                if (l.первая) d.push({ поле: 'первое отличие', было: '', стало: l.первая, код: true });
+            }
+            return d;
+        }));
+
+    add('pivots', 'Сводные таблицы', 'расположение и состав',
+        diffSet(a.pivots, b.pivots, p => p.name, p => 'Сводная «' + p.name + '»', (x, y) => [
+            fld('лист', x.sheet, y.sheet),
+            fld('диапазон', x.location, y.location),
+            fld('полей в области значений', (x.dataFlds || []).length, (y.dataFlds || []).length),
+        ]));
+
+    add('ext', 'Ссылки на другие книги', 'пути к внешним файлам',
+        diffSet(a.externalLinks, b.externalLinks, l => l.path, l => l.path));
+
+    const ma = a.model || {}, mb = b.model || {};
+    const модель = diffSet(ma.measures, mb.measures, m => m.name, m => 'Мера «' + m.name + '»')
+        .concat(diffSet(ma.tables, mb.tables, t => t.name, t => 'Таблица модели «' + t.name + '»', (x, y) => [
+            fld('колонок', (x.columns || []).length, (y.columns || []).length),
+            fld('колонки', (x.columns || []).join(', '), (y.columns || []).join(', ')),
+        ]));
+    add('model', 'Модель данных', 'имена мер и таблиц, видимые через кеши сводных', модель);
+
+    const бинарь = [];
+    [['xl/model/item.data', 'Модель Power Pivot'], ['xl/vbaProject.bin', 'Код VBA']].forEach(([p, t]) => {
+        const v = partVerdict(a, b, p);
+        if (v.есть) бинарь.push({ вид: v.менялось ? 'chg' : 'same', что: t,
+                                  детали: [{ поле: 'по контрольной сумме', было: '', стало: v.текст }] });
+    });
+    add('binary', 'Закрытые части файла', 'содержимое не читается, сверяем контрольные суммы', бинарь);
+
+    let части = null;
+    if (a.parts && b.parts) {
+        const имена = new Set([...a.parts.keys(), ...b.parts.keys()]);
+        части = { одинаковых: 0, изменено: [], добавлено: [], удалено: [] };
+        имена.forEach(n => {
+            const x = a.parts.get(n), y = b.parts.get(n);
+            if (x && y) { if (x.crc === y.crc) части.одинаковых++; else части.изменено.push(n); }
+            else if (y) части.добавлено.push(n);
+            else части.удалено.push(n);
+        });
+        ['изменено', 'добавлено', 'удалено'].forEach(k => части[k].sort());
+    }
+
+    const всего = разделы.reduce((s, r) => s + r.строки.filter(x => x.вид !== 'same').length, 0);
+    return { разделы, всего, части, оговорки: diffBlindSpots(a, b) };
+}
+
 /* ─────────────── РАЗБОР ПО КОЛОНКАМ ─────────────── */
 
 const COL_KINDS = {
@@ -5234,6 +5625,127 @@ function columnsCSV() {
         c.gaps.map(r => c.letter + (r + 1)).join(' '), (c.patterns[0] || {}).sample || '',
     ].map(x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"').join(';')));
     return '﻿' + L.join('\n');
+}
+
+/* ─────────────── СРАВНЕНИЕ ВЕРСИЙ: ОТРИСОВКА ─────────────── */
+
+const DIFF_MARK = { add: 'добавлено', del: 'удалено', chg: 'изменено', same: 'без правок' };
+
+/** Значение поля «было → стало». Формулы и M-код показываем моноширинным блоком. */
+function diffValue(d) {
+    if (d.код) {
+        return (d.было ? '<span class="diff-code diff-was">' + esc(d.было) + '</span>' : '') +
+               '<span class="diff-code diff-now">' + esc(d.стало) + '</span>';
+    }
+    if (d.было === '' || d.было == null) return '<span class="diff-now">' + esc(String(d.стало)) + '</span>';
+    return '<span class="diff-was">' + esc(String(d.было)) + '</span>' +
+           '<span class="diff-sep">→</span><span class="diff-now">' + esc(String(d.стало)) + '</span>';
+}
+
+function diffRowHtml(r) {
+    return '<div class="diff-row"><span class="diff-mark ' + r.вид + '">' + DIFF_MARK[r.вид] + '</span>' +
+        '<div class="diff-body"><div class="diff-what">' + esc(r.что) + '</div>' +
+        ((r.детали || []).length
+            ? '<dl class="diff-fields">' + r.детали.map(d =>
+                '<dt>' + esc(d.поле) + '</dt><dd>' + diffValue(d) + '</dd>').join('') + '</dl>'
+            : '') +
+        '</div></div>';
+}
+
+/** Индексы книг для сравнения: по умолчанию первая и вторая загруженные. */
+function diffPair() {
+    const n = APP.books.length;
+    let a = APP.diffA, b = APP.diffB;
+    if (!(a >= 0 && a < n)) a = 0;
+    if (!(b >= 0 && b < n)) b = n > 1 ? 1 : 0;
+    if (a === b) b = (a + 1) % n;
+    return [a, b];
+}
+
+function renderDiff() {
+    const box = $('#diff-content');
+    if (APP.books.length < 2) {
+        box.innerHTML = '<div class="card"><div class="empty-state">Загружено меньше двух книг. ' +
+            'Откройте обе версии сразу — на вкладке «Загрузка» можно выбрать несколько файлов, ' +
+            'и REX сравнит их между собой.</div></div>';
+        $('#diff-sum').textContent = '';
+        return;
+    }
+    const [ia, ib] = diffPair();
+    APP.diffA = ia; APP.diffB = ib;
+    const opts = (sel) => APP.books.map((bk, i) =>
+        '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>' + esc(bk.fileName) + '</option>').join('');
+    $('#diff-a').innerHTML = opts(ia);
+    $('#diff-b').innerHTML = opts(ib);
+
+    const a = APP.books[ia], b = APP.books[ib];
+    const d = diffBooks(a, b);
+    APP.diff = d;
+
+    $('#diff-sum').textContent = d.всего ? 'отличий: ' + fmtNum(d.всего) : 'отличий не найдено';
+
+    let html = '';
+    if (!d.всего) {
+        html += '<div class="card"><div class="empty-state">По разобранным данным книги совпадают. ' +
+            (d.части && d.части.изменено.length
+                ? 'При этом в архиве отличаются ' + plural(d.части.изменено.length, ['часть', 'части', 'частей']) +
+                  ' — скорее всего это оформление или служебные данные, которые REX не разбирает.'
+                : 'Отличаются они и на уровне файла: ни одна часть архива не изменилась.') +
+            '</div></div>';
+    }
+
+    d.разделы.forEach(r => {
+        const видно = r.строки.slice(0, DIFF_ROWS);
+        html += '<div class="card"><div class="card-title">' + esc(r.заголовок) +
+            ' <span class="hint">' + esc(r.подпись) + '</span>' +
+            '<span class="diff-sum">' + fmtNum(r.строки.length) + '</span></div>' +
+            видно.map(diffRowHtml).join('') +
+            (r.строки.length > видно.length
+                ? '<div class="diff-more">показаны первые ' + DIFF_ROWS + ' из ' + fmtNum(r.строки.length) +
+                  ' — остальные в выгрузке</div>'
+                : '') + '</div>';
+    });
+
+    if (d.части) {
+        html += '<div class="card"><div class="card-title">Части файла <span class="hint">' +
+            'сверка контрольных сумм архива: последний рубеж, когда по смыслу отличий не видно</span></div>' +
+            '<div class="diff-parts">' +
+            '<span>совпадают: <b>' + fmtNum(d.части.одинаковых) + '</b></span>' +
+            '<span class="diff-was">изменились: <b>' + fmtNum(d.части.изменено.length) + '</b></span>' +
+            '<span class="diff-now">добавлены: <b>' + fmtNum(d.части.добавлено.length) + '</b></span>' +
+            '<span class="diff-was">удалены: <b>' + fmtNum(d.части.удалено.length) + '</b></span></div></div>';
+    }
+
+    html += '<div class="card" style="background:var(--warning-light);border-color:#fcd34d">' +
+        '<div class="diff-note"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/>' +
+        '<path d="M12 8v5M12 16.5v.01"/></svg><div><b>Что сравнение не покажет</b><ul>' +
+        d.оговорки.map(t => '<li>' + esc(t) + '</li>').join('') + '</ul></div></div></div>';
+
+    box.innerHTML = html;
+}
+
+/** Плоская выгрузка: раздел, вид правки, объект, поле, было, стало.
+    Разделитель и BOM — как у остальных выгрузок REX: Excel открывает их
+    двойным щелчком без мастера импорта. */
+function diffCSV() {
+    const d = APP.diff;
+    if (!d) return '';
+    const [ia, ib] = diffPair();
+    const q = x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"';
+    const L = [q('Было') + ';' + q(APP.books[ia].fileName),
+               q('Стало') + ';' + q(APP.books[ib].fileName), '',
+               ['Раздел', 'Правка', 'Объект', 'Поле', 'Было', 'Стало'].map(q).join(';')];
+    const put = a => L.push(a.map(q).join(';'));
+    d.разделы.forEach(r => r.строки.forEach(x => {
+        if (!(x.детали || []).length) put([r.заголовок, DIFF_MARK[x.вид], x.что, '', '', '']);
+        else x.детали.forEach(f => put([r.заголовок, DIFF_MARK[x.вид], x.что, f.поле, f.было, f.стало]));
+    }));
+    if (d.части) {
+        d.части.изменено.forEach(n => put(['Части файла', 'изменено', n, '', '', '']));
+        d.части.добавлено.forEach(n => put(['Части файла', 'добавлено', n, '', '', '']));
+        d.части.удалено.forEach(n => put(['Части файла', 'удалено', n, '', '', '']));
+    }
+    return '\ufeff' + L.join('\n');
 }
 
 /* ─────────────── ВЛИЯНИЕ: панель, фильтр, план очистки ─────────────── */
@@ -5609,9 +6121,12 @@ function cyElements() {
         })).map(el => {
             // Иконку собираем после пометок: обводка вшивается в саму картинку,
             // потому что бордюр Cytoscape умеет только прямоугольный.
-            el.data.icon = el.data.warn ? nodeIcon(el.data.type, null, '#dc2626')
-                         : el.data.hidden ? nodeIcon(el.data.type, null, '#94a3b8', true)
-                         : nodeIcon(el.data.type);
+            /* 'none', а не пустая строка: у рамки «Книга» своей иконки нет, и
+               парсер стилей Cytoscape на пустом значении падает. Всплыло только
+               при двух книгах сразу — одна книга рамку не рисует. */
+            el.data.icon = (el.data.warn ? nodeIcon(el.data.type, null, '#dc2626')
+                          : el.data.hidden ? nodeIcon(el.data.type, null, '#94a3b8', true)
+                          : nodeIcon(el.data.type)) || 'none';
             return el;
         }),
         ...edges.filter(e => present.has(e.source) && present.has(e.target)).map(e => ({
@@ -5910,6 +6425,7 @@ function renderGraph() {
             { selector: 'node[type = "sheet"]',  style: { 'width': 28, 'height': 28 } },
             { selector: 'node[type = "source"]', style: { 'width': 28, 'height': 28 } },
             { selector: 'node.parent', style: {
+                'background-image': 'none',
                 'background-color': '#f1f5f9', 'background-opacity': .55, 'border-color': '#cbd5e1',
                 'border-width': 1.5, 'shape': 'round-rectangle', 'text-valign': 'top',
                 'font-size': 12, 'font-weight': 800, 'color': '#475569', 'padding': 16,
@@ -6801,6 +7317,20 @@ function initEvents() {
         if (c) row.insertAdjacentHTML('afterend', colDetailRow(c));
     });
     $('#btn-col-csv').onclick = () => download('REX_разбор_колонок.csv', columnsCSV(), 'text/csv;charset=utf-8');
+
+    /* ── сравнение версий */
+    const пересчёт = () => { renderDiff(); renderBadges(); };
+    $('#diff-a').onchange = e => { APP.diffA = +e.target.value; пересчёт(); };
+    $('#diff-b').onchange = e => { APP.diffB = +e.target.value; пересчёт(); };
+    $('#btn-diff-swap').onclick = () => {
+        const [a, b] = diffPair();
+        APP.diffA = b; APP.diffB = a;
+        пересчёт();
+    };
+    $('#btn-diff-csv').onclick = () => {
+        if (!APP.diff) return showNotification('Сравнивать нечего: загрузите две книги.', 'error');
+        download('REX_отличия_версий.csv', diffCSV(), 'text/csv;charset=utf-8');
+    };
 
     $('#sheet-scope-clear').onclick = () => {
         APP.sheetScope = null;
