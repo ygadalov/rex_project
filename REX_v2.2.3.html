@@ -7109,6 +7109,26 @@ function focusNode(id) {
     centerOnNode(node, { zoom: true });
 }
 
+/** Почему объект не попал на холст. Раньше сообщение перечисляло два
+    возможных фильтра сразу, не говоря, какой из них сработал, — и молчало о
+    самой частой причине: объект из другой книги. */
+function whyHidden(id) {
+    const meta = APP.graph.index.get(id);
+    if (!meta) return 'Объекта нет в разобранном графе.';
+    if (!inScope(meta.bookIdx)) {
+        const кн = (APP.books[meta.bookIdx] || {}).fileName || 'другой книге';
+        return 'Объект из книги «' + кн + '», а сейчас разбирается другая. ' +
+               'Переключите «Разбираем файл» в меню слева.';
+    }
+    if (APP.typeFilter && !APP.typeFilter.has(meta.type))
+        return 'Тип «' + ((NODE_TYPES[meta.type] || {}).label || meta.type) + '» выключен в строке «Показывать».';
+    if ($('#opt-dead') && $('#opt-dead').checked)
+        return 'Включён фильтр «Только ни на что не влияет», а этот объект на что-то влияет.';
+    if ($('#opt-orphans') && !$('#opt-orphans').checked)
+        return 'У объекта нет связей, а показ несвязанных выключен — включите «Показывать несвязанные».';
+    return 'Объект не попал на холст: проверьте фильтры в строке «Показывать».';
+}
+
 function clearFocus() {
     window.__focusSeeds = null;
     const lg = $('#graph-legend');
