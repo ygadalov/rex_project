@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.2.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.2.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1597,7 +1597,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.2.1';
 
 const APP = {
     books: [],          // разобранные книги
@@ -4571,7 +4571,6 @@ function highlightM(code) {
     return out;
 }
 
-const SRC_ICON = { db: '🗄', file: '📄', folder: '📁', web: '🌐', 'workbook-table': '▦' };
 
 function renderPQ() {
     const all = [];
@@ -4600,8 +4599,8 @@ function renderPQ() {
             '<td>' + (q.isParameter
                 ? '<span class="mono" style="font-size:11px;overflow-wrap:anywhere" title="' + esc(q.value) + '">' + esc(shortPath(q.value, 70)) + '</span>'
                 : q.sources.length
-                ? q.sources.map(s => '<span class="pill pill-teal" title="' + esc(s.detail) + '">' + (SRC_ICON[s.kind] || '•') +
-                    ' ' + esc(s.label) + (s.viaParam ? ' ← ' + esc(s.viaParam) : '') + '</span>').join(' ')
+                ? q.sources.map(s => '<span class="pill pill-teal" title="' + esc(s.detail) + '">' + srcGlyph(s.kind) +
+                    esc(s.label) + (s.viaParam ? ' ← ' + esc(s.viaParam) : '') + '</span>').join(' ')
                 : '<span class="muted">производный</span>') + '</td>' +
             '<td class="num-cell">' + (q.isParameter ? '—' : q.steps.length) + '</td>' +
             '<td>' + (q.refs.length ? esc(q.refs.join(', ')) : '<span class="muted">—</span>') + '</td>' +
@@ -4617,10 +4616,10 @@ function renderPQ() {
             (q.isParameter ? '<div class="issue-why" style="margin-bottom:11px">Параметр-запрос. Значение: ' +
                 '<span class="mono" style="overflow-wrap:anywhere">' + esc(String(q.value)) + '</span></div>' : '') +
             (q.sources.length ? '<div style="margin-bottom:11px">' + q.sources.map(s =>
-                '<div style="font-size:12.5px;margin-bottom:3px">' + (SRC_ICON[s.kind] || '•') + ' <strong>' + esc(s.label) + ':</strong> ' +
+                '<div style="font-size:12.5px;margin-bottom:3px;display:flex;align-items:center;gap:6px">' + srcGlyph(s.kind) + '<span><strong>' + esc(s.label) + ':</strong> ' +
                 '<span class="mono" style="overflow-wrap:anywhere">' + esc(s.detail) + '</span>' +
                 (s.viaParam ? ' <span class="pill pill-amber">через параметр ' + esc(s.viaParam) + '</span>' : '') +
-                '</div>').join('') + '</div>' : '') +
+                '</span></div>').join('') + '</div>' : '') +
             (q.steps.length
                 ? '<div class="pq-steps">' + q.steps.map((s, n) =>
                     '<div class="pq-step' + (s.sources.length ? ' is-source' : '') + '">' +
@@ -7366,6 +7365,39 @@ const ICONS = {
   // мера модели — сигма
   measure: '<path d="M5 3H19V6.2H10.4L16 12L10.4 17.8H19V21H5V18.6L11.8 12L5 5.4Z"/>',
 };
+
+/* Источники запроса рисуем той же системой, что и объекты графа: силуэт на
+   сетке 24 с белыми прорезями. Раньше здесь стояли эмодзи (🗄 📄 📁 🌐 ▦) —
+   они приходят из шрифта системы, поэтому на разных машинах выглядят по-разному
+   и с иконками приложения не роднятся никак.
+
+   Два вида берём готовыми: база данных — тот же цилиндр, что у внешнего
+   источника на графе, а таблица книги — та же сетка, что у умной таблицы.
+   Это не экономия: источник запроса и узел графа здесь буквально одно и то же,
+   и разные значки для одной сущности только сбивали бы. */
+const SRC_ICONS = {
+    db:     null,   // подставляется из ICONS ниже: объявления идут раньше ICONS
+    'workbook-table': null,
+    // файл — страница с загнутым углом и строками текста; у «внешней книги»
+    // на графе тот же силуэт, но со стрелкой: там это ссылка, здесь источник
+    file:   '<path d="M5 2h9l5 5v15H5z"/><path d="M14 2v5h5" fill="' + ICON_W + '" fill-opacity=".45"/>' +
+            '<path d="M8 12.5h8M8 16h5.5" stroke="' + ICON_W + '" stroke-width="1.8" fill="none"/>',
+    // папка с язычком
+    folder: '<path d="M2.5 4.5h6.6l2.2 2.8H21.5v12.2h-19z"/>' +
+            '<path d="M2.5 10.2h19" stroke="' + ICON_W + '" stroke-width="1.7" fill="none"/>',
+    // веб — глобус: экватор и два меридиана
+    web:    '<circle cx="12" cy="12" r="10"/>' +
+            '<path d="M2 12h20M12 2c3.1 3 3.1 17 0 20M12 2c-3.1 3-3.1 17 0 20" ' +
+            'stroke="' + ICON_W + '" stroke-width="1.6" fill="none"/>',
+};
+
+/** Значок источника запроса, 15×15, в цвете окружающего текста. */
+function srcGlyph(kind) {
+    const body = SRC_ICONS[kind] || (kind === 'db' ? ICONS.source : null)
+              || (kind === 'workbook-table' ? ICONS.table : null) || ICONS.source;
+    return '<svg class="node-glyph" width="14" height="14" viewBox="-2 -2 28 28" ' +
+        'aria-hidden="true" fill="currentColor">' + body + '</svg>';
+}
 
 /**
  * Обводка по силуэту, а не рамка вокруг узла.
