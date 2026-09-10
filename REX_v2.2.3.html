@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.2.2 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.2.3 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1607,7 +1607,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.2.2';
+const APP_VERSION = '2.2.3';
 
 const APP = {
     books: [],          // разобранные книги
@@ -6876,7 +6876,16 @@ function renderGraph() {
             { selector: 'node.dm-del', style: {
                 'underlay-color': '#b91c1c', 'underlay-opacity': .3, 'underlay-padding': 9 } },
 
-            { selector: '.faded', style: { 'opacity': .12, 'text-opacity': .05 } },
+            /* z-index обязателен: без него порядок отрисовки погашенного и живого
+               узла не определён, и серая масса ложилась поверх подсвеченных.
+               На плотном графе (две книги — за 250 узлов) это и читалось как
+               «побелело всё, кроме связей». 0.12 там же давало заметную дымку —
+               двести узлов по 12 % складываются в фон. */
+            { selector: '.faded', style: { 'opacity': .08, 'text-opacity': .04, 'z-index': 0 } },
+            /* Живой узел вне ближнего круга: размер прежний — три ступени
+               (выбранный, сосед, остальные) задуманы намеренно, — но рисуется
+               поверх погашенных и на полном цвете. */
+            { selector: 'node.hl-far', style: { 'z-index': 10 } },
             // Объявлено ПОСЛЕ .faded намеренно: в cytoscape побеждает последнее
             // правило, иначе погашенную связь нельзя рассмотреть наведением.
             { selector: 'edge.edge-hl', style: { 'width': 4, 'opacity': 1, 'z-index': 20 } },
@@ -6966,10 +6975,10 @@ function renderGraph() {
         badge.textContent = fmtNum(nodeCount);
         badge.title = nodeCount < total ? 'показано ' + fmtNum(nodeCount) + ' из ' + fmtNum(total) + ' объектов' : '';
     }
-    cy.on('tap', 'node', evt => {
-        focusNode(evt.target.id());
-        centerOnNode(evt.target);          // без зума: контекст у пользователя уже есть
-    });
+    // Вид двигает сам focusNode: второй вызов centerOnNode здесь пересчитывал
+    // пан по ещё старому масштабу и затирал первую анимацию — узел уезжал на
+    // полтысячи пикселей от центра.
+    cy.on('tap', 'node', evt => focusNode(evt.target.id()));
     cy.on('tap', evt => { if (evt.target === cy) clearFocus(); });
 
     buildLegend();
@@ -7004,8 +7013,21 @@ function centerOnNode(node, opts) {
     // Уже практически в центре и масштаб менять не надо — оставляем вид как есть
     if (offX < 0.22 && offY < 0.22 && !needZoom) return;
 
-    const anim = { center: { eles: node } };
-    if (needZoom) anim.zoom = wantZoom;
+    /* Пан считаем сами, а не отдаём cytoscape как { center }.
+       При одновременной анимации центра и масштаба он вычисляет пан по
+       ТЕКУЩЕМУ зуму, а не по целевому, и на большом скачке (0.4 → 0.9)
+       промахивается на сотни пикселей. Раньше это не всплывало: масштаб
+       менял только выбор из списка, а он звал centerOnNode вторым заходом,
+       когда зум уже стоял на месте и анимировался чистый центр.
+       Экранная позиция узла = pos * zoom + pan, отсюда и формула. */
+    const anim = {};
+    if (needZoom) {
+        anim.zoom = wantZoom;
+        anim.pan = { x: cy.width() / 2 - pos.x * wantZoom,
+                     y: cy.height() / 2 - pos.y * wantZoom };
+    } else {
+        anim.center = { eles: node };
+    }
     cy.animate(anim, { duration: 380, easing: 'ease-out-cubic' });
 }
 
@@ -7026,7 +7048,7 @@ function focusNode(id) {
     const node = cy.getElementById(id);
     if (!node || !node.length) return;
 
-    cy.elements().addClass('faded').removeClass('hl-node hl-up hl-down hl-self hl-near');
+    cy.elements().addClass('faded').removeClass('hl-node hl-up hl-down hl-self hl-near hl-far');
 
     // Лист «раскрывается» вместе со своими таблицами и сводными: данные уходят
     // с листа через них, и без этого лист выглядел бы тупиком.
@@ -7064,8 +7086,8 @@ function focusNode(id) {
     if (typeof setPickerValue === 'function') setPickerValue(meta.label || '');
     const lg = $('#graph-legend');
     if (lg) { lg.classList.add('focus-mode'); $('#lg-focus').hidden = false; }
-    up.forEach(n => cy.getElementById(n).removeClass('faded'));
-    down.forEach(n => cy.getElementById(n).removeClass('faded'));
+    up.forEach(n => cy.getElementById(n).removeClass('faded').addClass('hl-far'));
+    down.forEach(n => cy.getElementById(n).removeClass('faded').addClass('hl-far'));
     // Связь внутри выбранного (лист ↔ его таблица) не «вверх» и не «вниз»:
     // иначе она получала бы обе метки сразу и подпись врала бы.
     const inSeeds = e => seedSet.has(e.source().id()) && seedSet.has(e.target().id());
@@ -7078,15 +7100,21 @@ function focusNode(id) {
     });
 
     showNodeDetails(id, up, down, seeds.slice(1), relUp, relDown);
+    /* Клик по узлу вид не двигал вовсе: масштаб менялся только при выборе из
+       списка. На общем плане (две книги — за 250 узлов, зум около 0.3) иконка
+       занимает восемь пикселей, и подсветка ничего не даёт — видно только яркие
+       связи. Делаем то же, что и выбор из списка: подводим узел к центру и
+       поднимаем масштаб до читаемого, но только если он ниже. Если объект уже
+       в центре и виден — centerOnNode сам ничего не трогает. */
+    centerOnNode(node, { zoom: true });
 }
 
 function clearFocus() {
     window.__focusSeeds = null;
     const lg = $('#graph-legend');
     if (lg) { lg.classList.remove('focus-mode'); $('#lg-focus').hidden = true; }
-    if (window.__cy) window.__cy.elements().removeClass('hl-near');
     if (typeof setPickerValue === 'function') setPickerValue('');
-    if (window.__cy) window.__cy.elements().removeClass('faded hl-node hl-up hl-down hl-self');
+    if (window.__cy) window.__cy.elements().removeClass('faded hl-node hl-up hl-down hl-self hl-near hl-far');
     $('#graph-details').hidden = true;
 }
 
@@ -7719,8 +7747,8 @@ function initEvents() {
             setTimeout(() => {
                 if (!window.__cy) return;
                 const n = window.__cy.getElementById(id);
-                if (n && n.length) { focusNode(id); centerOnNode(n, { zoom: true }); }
-                else showNotification('Этот объект отфильтрован: включите его тип или снимите фильтр одиночных узлов', 'info', 5000);
+                if (n && n.length) focusNode(id);   // подводит и приближает сам
+                else showNotification(whyHidden(id), 'info', 6000);
             }, 260);
             return;
         }
@@ -7994,7 +8022,9 @@ function initEvents() {
         const shown = APP.typeFilter;
         const groups = [];
         TYPE_ORDER.forEach(t => {
-            let list = APP.graph.nodes.filter(n => !n.isParent && n.type === t);
+            // Только книги области: иначе список предлагает объекты соседней
+            // книги, на холсте их нет, и выбор упирался в «объект отфильтрован».
+            let list = APP.graph.nodes.filter(n => !n.isParent && n.type === t && inScope(n.bookIdx));
             if (q) list = list.filter(n => (n.label + ' ' + nodeLocation(n)).toLowerCase().indexOf(q) !== -1);
             if (list.length) groups.push({ type: t, list });
         });
