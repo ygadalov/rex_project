@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.2.3 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.3.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1152,7 +1152,7 @@ table.matrix td.cell[data-n] { cursor: default; }
     <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Выбрать файл Excel">
         <div class="dz-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9.5 12.5 5 5"/><path d="m14.5 12.5-5 5"/></svg></div>
         <div class="dz-title">Перетащите книгу сюда или нажмите, чтобы выбрать</div>
-        <div class="dz-sub">Можно сразу несколько файлов — тогда построится граф связей между книгами</div>
+        <div class="dz-sub">Две версии одного файла — чтобы сравнить их и увидеть отличия прямо на графе</div>
         <div class="dz-formats">
             <span class="dz-format">.xlsx</span><span class="dz-format">.xlsm</span>
             <span class="dz-format">.xlsb</span><span class="dz-format">.xls</span><span class="dz-format">.xltx</span>
@@ -1258,7 +1258,6 @@ table.matrix td.cell[data-n] { cursor: default; }
                 <button data-layout="dagre-tb" title="Слои сверху вниз">Слоями ↓</button>
                 <button data-layout="cose"    title="Силовая раскладка: видно кластеры">Кластерами</button>
             </div>
-            <label class="chk" title="Показывать листы внутри рамки книги"><input type="checkbox" id="opt-groups" checked> Группировать по книгам</label>
             <label class="chk" title="Объекты, у которых нет ни одной связи на графе"><input type="checkbox" id="opt-orphans" checked> Показывать несвязанные</label>
             <label class="chk" title="INDIRECT/OFFSET и подобные — ссылки, которые собираются во время расчёта"><input type="checkbox" id="opt-invisible" checked> «Невидимые» связи</label>
             <label class="chk" title="Оставить на холсте только объекты, из которых никто не читает данные"><input type="checkbox" id="opt-dead"> Только «ни на что не влияет»</label>
@@ -1607,7 +1606,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.2.3';
+const APP_VERSION = '2.3.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1632,10 +1631,18 @@ const APP = {
 };
 
 /* ───────────────────────── область просмотра ─────────────────────────
-   Когда книг загружено больше одной, страницы по умолчанию складывали их
-   данные в одну кучу: 19 листов превращались в 38, а «Качество данных»
-   печатало каждое правило дважды. Складывать две версии одного файла
-   бессмысленно, поэтому есть область — какую книгу сейчас разбираем.
+   Когда книг загружено больше одной, страницы складывали их данные в одну
+   кучу: 19 листов превращались в 38, а «Качество данных» печатало каждое
+   правило дважды. Поэтому есть область — какую книгу сейчас разбираем.
+
+   Область всегда ровно одна книга. Режим «все книги сразу» был и убран:
+   связей МЕЖДУ книгами REX не строит вовсе — все вызовы addEdge замкнуты на
+   индекс текущей книги, — и общий граф показывал не связи двух книг, а два
+   независимых графа, положенных в одно место. Раскладке нечем было их
+   развести, подсветка не переходила с объекта на двойника, половина холста
+   всегда гасла, а раскладка занимала втрое дольше (1629 мс против 518).
+   Две книги разом показывает режим различий: он накладывает результат
+   сравнения на граф одной книги.
 
    Храним индекс, а не ссылку на книгу: узлы графа и идентификаторы
    объектов адресуются номером книги («s:0:Лист1»), и подмена массива
@@ -1643,7 +1650,7 @@ const APP = {
    APP.books с настоящим индексом, а лишнее отсекают через inScope. */
 
 /** Показывать ли книгу с этим индексом при текущей области. */
-function inScope(bi) { return APP.scope == null || APP.scope === bi; }
+function inScope(bi) { return APP.scope === bi; }
 
 /** Книги, попадающие в область. Для сумм и «есть ли хоть одна». */
 function scopedBooks() { return APP.books.filter((b, i) => inScope(i)); }
@@ -1652,7 +1659,7 @@ function scopedBooks() { return APP.books.filter((b, i) => inScope(i)); }
 function scopedIssues() { return APP.issues.filter(i => inScope(i.bookIdx)); }
 
 /** Книга области, или первая — там, где нужна ровно одна (например, макрос). */
-function scopeBook() { return APP.books[APP.scope == null ? 0 : APP.scope] || null; }
+function scopeBook() { return APP.books[APP.scope] || null; }
 
 /* ───────────────────────── мелкие утилиты ───────────────────────── */
 
@@ -3940,9 +3947,8 @@ async function loadFiles(fileList, append) {
     связях, аудит. Нужна и после разбора новых файлов, и после удаления книги —
     иначе на графе остаются узлы уже выброшенного файла. */
 function rebuildDerived() {
-    // По умолчанию смотрим одну книгу, а не «все»: складывать две версии одного
-    // файла бессмысленно, и именно эта сумма раньше выдавала 38 листов вместо 19.
-    // «Все книги» остаётся в списке, но выбирается руками.
+    // Область — всегда конкретная книга; после смены набора книг индекс мог
+    // указать за конец массива.
     if (APP.books.length && (APP.scope == null || !APP.books[APP.scope])) APP.scope = 0;
     APP.typeFilter = null;              // набор книг сменился — фильтр типов пересобираем
     APP.edgeFilter = null;
@@ -4044,20 +4050,11 @@ function renderBadges() {
     /* Режим различий требует пары и выбранной книги. При «всех книгах сразу»
        сравнивать нечего: на холсте уже обе версии. */
     const dw = $('#opt-diff-wrap'), dc = $('#opt-diff');
-    const парой = APP.books.length === 2 && APP.scope != null;
-    dw.hidden = APP.books.length !== 2;
+    const парой = APP.books.length === 2;
+    dw.hidden = !парой;
     dc.disabled = !парой;
-    dw.style.opacity = парой ? 1 : .45;
-    dw.title = парой
-        ? 'Пометить объекты, которые отличаются от второй загруженной версии'
-        : 'Выберите одну книгу в «Разбираем файл»: в режиме «все книги сразу» на холсте уже обе версии';
+    dw.title = 'Пометить объекты, которые отличаются от второй загруженной версии';
     if (!парой && dc.checked) { dc.checked = false; APP.diffOnGraph = false; }
-
-    // Группировка по книгам осмысленна только при нескольких файлах — иначе это мёртвый переключатель
-    const grp = $('#opt-groups');
-    grp.disabled = APP.books.length < 2;
-    grp.closest('.chk').style.opacity = grp.disabled ? .45 : 1;
-    grp.closest('.chk').title = grp.disabled ? 'Нужны минимум две книги' : 'Показывать листы внутри рамки книги';
 
     const totalSheets = scopedBooks().reduce((a, b) => a + b.sheets.length, 0);
     const totalQ = scopedBooks().reduce((a, b) => a + (b.queries || []).length, 0);
@@ -4093,8 +4090,7 @@ function renderScopeBar() {
     if (!many) { APP.scope = APP.books.length ? 0 : null; return; }
     sel.innerHTML = APP.books.map((b, i) =>
         '<option value="' + i + '"' + (APP.scope === i ? ' selected' : '') + '>' +
-        esc(b.fileName) + '</option>').join('') +
-        '<option value="all"' + (APP.scope == null ? ' selected' : '') + '>Все книги сразу</option>';
+        esc(b.fileName) + '</option>').join('');
 }
 
 function renderLoadedList() {
@@ -4870,10 +4866,8 @@ const looksBuiltin = bare => {
     Диспетчере имён и разбирается с ними сам, макрос для этого не нужен. */
 function classifyNames() {
     const rows = [];
-    // Строго одна книга, даже если область — «все»: макрос всегда пишется под
-    // конкретный файл, а смешать имена двух книг в один список значит соврать
-    // и в счётчиках, и в списке защищённых имён.
-    const bi = APP.scope == null ? 0 : APP.scope;
+    // Ровно книга области: макрос всегда пишется под конкретный файл.
+    const bi = APP.scope;
     [APP.books[bi]].filter(Boolean).forEach(b => (b.names || []).forEach(n => {
         const bare = bareName(n.name);
         const isBuiltin = n.builtin || looksBuiltin(bare);
@@ -5767,7 +5761,7 @@ const DIFF_NODE = {
 function diffMarks(bi) {
     const пусто = { marks: new Map(), сч: { add: 0, chg: 0, del: 0 },
                     пара: null, сторона: null, пропало: [], появилось: [] };
-    if (APP.books.length !== 2 || bi == null || !APP.books[bi]) return пусто;
+    if (APP.books.length !== 2 || !APP.books[bi]) return пусто;
     const другая = bi === 0 ? 1 : 0;
 
     const ia = Math.min(bi, другая), ib = Math.max(bi, другая);
@@ -5814,7 +5808,7 @@ function diffMarks(bi) {
 
 /** Пометки для текущей области, или пустышка, если режим выключен. */
 function activeDiffMarks() {
-    if (!APP.diffOnGraph || APP.scope == null || APP.books.length !== 2) {
+    if (!APP.diffOnGraph || APP.books.length !== 2) {
         return { marks: new Map(), сч: { add: 0, chg: 0, del: 0 },
                  пара: null, сторона: null, пропало: [], появилось: [] };
     }
@@ -6288,8 +6282,7 @@ function renderCleanup() {
     // под какой именно: область «все книги» здесь молча берёт первую.
     const cb = scopeBook();
     $('#cleanup-book').innerHTML = APP.books.length > 1 && cb
-        ? 'Макрос собран для книги <b>' + esc(cb.fileName) + '</b>' +
-          (APP.scope == null ? ' (область — «все книги», взята первая)' : '') + '.'
+        ? 'Макрос собран для книги <b>' + esc(cb.fileName) + '</b>.'
         : '';
 
     const prot = protectedNames();
@@ -6479,10 +6472,9 @@ function deriveInvisibleEdges(graph, books) {
 }
 
 function cyElements() {
-    // Рамка нужна, только когда на холсте правда несколько книг. Раньше условие
-    // смотрело на число загруженных, и при выборе одной книги из двух вокруг
-    // всего графа появлялась рамка, которая ничего не разделяет.
-    const groups = $('#opt-groups').checked && scopedBooks().length > 1;
+    // Рамки «Книга» на холсте больше нет: область — всегда одна книга, и
+    // обводить ею весь граф нечего. Узлы-рамки в графе остаются (их строит
+    // buildGraph), но на холст не попадают.
     const showOrphans = $('#opt-orphans').checked;
     const showInvisible = $('#opt-invisible').checked;
 
@@ -6507,7 +6499,7 @@ function cyElements() {
 
     const nodes = APP.graph.nodes.filter(n => {
         if (!typeOk(n)) return false;
-        if (n.isParent) return groups;
+        if (n.isParent) return false;
         if (!showOrphans && !deg.get(n.id)) return false;
         return true;
     });
@@ -6526,7 +6518,7 @@ function cyElements() {
                 // файла, полный путь отдаём подсказке (data.full) и панели.
                 label: (splitPath(n.label) || {}).name || n.label,
                 full: splitPath(n.label) ? n.label : '',
-                parent: groups && n.parent && present.has(n.parent) ? n.parent : undefined,
+                parent: undefined,   // рамок «Книга» на холсте нет: область — одна книга
                 color: (NODE_TYPES[n.type] || {}).color || '#64748b',
                 warn: (n.type === 'sheet' && n.ref && n.ref.errorCount > 0) ||
                       (n.type === 'name' && n.ref && n.ref.broken) ||
@@ -7887,8 +7879,7 @@ function initEvents() {
     /* Выбор книги. Меняет только область просмотра — книги остаются
        разобранными, граф не пересобирается, поэтому переключение мгновенное. */
     $('#scope-select').addEventListener('change', e => {
-        const v = e.target.value;
-        APP.scope = v === 'all' ? null : Number(v);
+        APP.scope = Number(e.target.value);
         // Выбор листа и разбор колонок относятся к прежней книге
         APP.sheetScope = null; APP.colSheet = null; APP.impactCache = null;
         APP.cleanupGroups = null; APP.cleanupPick = null;
@@ -7996,7 +7987,7 @@ function initEvents() {
         currentLayout = b.dataset.layout;
         if (window.__cy) runLayout(window.__cy, currentLayout);
     });
-    ['#opt-groups', '#opt-orphans', '#opt-invisible', '#opt-dead'].forEach(sel => { $(sel).onchange = renderGraph; });
+    ['#opt-orphans', '#opt-invisible', '#opt-dead'].forEach(sel => { $(sel).onchange = renderGraph; });
     $('#type-filter').addEventListener('click', e => {
         const chip = e.target.closest('.tchip');
         if (!chip) return;
