@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.1.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.1.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1040,7 +1040,7 @@ table.matrix td.cell[data-n] { cursor: default; }
 
     <!-- Появляется только когда книг больше одной: с одной выбирать нечего. -->
     <div class="scope-bar" id="scope-bar" hidden>
-        <label class="scope-label" for="scope-select">Разбираем книгу</label>
+        <label class="scope-label" for="scope-select">Разбираем файл</label>
         <select id="scope-select" class="scope-select" aria-label="Какую книгу разбирать"></select>
     </div>
 
@@ -1590,7 +1590,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.1.1';
 
 const APP = {
     books: [],          // разобранные книги
@@ -5885,8 +5885,12 @@ function diffRowHtml(r) {
 function diffPair() {
     const n = APP.books.length;
     let a = APP.diffA, b = APP.diffB;
-    if (!(a >= 0 && a < n)) a = 0;
-    if (!(b >= 0 && b < n)) b = n > 1 ? 1 : 0;
+    // Именно Number.isInteger, а не просто «a >= 0»: null проходит сравнение
+    // с нулём (null >= 0 истинно), доживает до APP.books[null] и роняет
+    // отрисовку на undefined.sheets. Так и ломалось «Сравнение версий»
+    // после удаления книги и повторного добавления.
+    if (!(Number.isInteger(a) && a >= 0 && a < n)) a = 0;
+    if (!(Number.isInteger(b) && b >= 0 && b < n)) b = n > 1 ? 1 : 0;
     if (a === b) b = (a + 1) % n;
     return [a, b];
 }
@@ -7029,8 +7033,14 @@ const TYPE_ORDER = ['sheet', 'table', 'query', 'source', 'modeltable', 'pivot', 
 const NOISY_LIMIT = 60;
 
 function buildTypeFilter(reset) {
+    // Считаем только по книгам области. Иначе с двумя книгами счёт имён
+    // удваивается, перешагивает NOISY_LIMIT — и тип «имя» гасится по умолчанию,
+    // хотя на холсте одна книга, где он бы остался включён. Из-за этого одна и
+    // та же книга показывала 125 узлов в одиночку и 80 в паре со второй.
     const counts = {};
-    APP.graph.nodes.forEach(n => { if (!n.isParent) counts[n.type] = (counts[n.type] || 0) + 1; });
+    APP.graph.nodes.forEach(n => {
+        if (!n.isParent && inScope(n.bookIdx)) counts[n.type] = (counts[n.type] || 0) + 1;
+    });
 
     if (reset || !APP.typeFilter) {
         const on = new Set(Object.keys(counts));
