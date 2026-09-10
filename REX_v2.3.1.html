@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.3.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.3.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -715,11 +715,6 @@ tr.row-link { cursor: pointer; }
     font-size: 10.5px; font-weight: 700; color: var(--primary); text-transform: none; letter-spacing: 0;
 }
 .lg-marks { display: flex; flex-direction: column; gap: 8px; margin-top: 5px; }
-.lg-diff { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-light); font-size: 11px; line-height: 1.5; }
-.lg-diff .lgd-head { font-weight: 800; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
-.lg-diff .lgd-row { display: flex; align-items: center; gap: 7px; padding: 2px 0; }
-.lg-diff .lgd-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
-.lg-diff .lgd-gone { margin-top: 6px; color: var(--text-muted); overflow-wrap: anywhere; }
 .lg-mark { font-size: 11px; line-height: 1.5; }
 .lg-mark > b { display: block; color: var(--text-secondary); font-weight: 700; margin-bottom: 3px; }
 .lg-mtypes { display: flex; flex-direction: column; gap: 2px; }
@@ -1293,7 +1288,6 @@ table.matrix td.cell[data-n] { cursor: default; }
                     <div class="lg-scroll">
                         <div class="lg-title lg-title-types">Типы связей · цвет не действует</div>
                         <div class="lg-edges" id="lg-edges"></div>
-                        <div class="lg-diff" id="lg-diff" hidden></div>
                         <div class="lg-focus" id="lg-focus" hidden></div>
                         <div class="lg-sub">
                             <button class="lg-more" id="lg-more" aria-expanded="false">Схема связей типов ▾</button>
@@ -1606,7 +1600,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.3.1';
 
 const APP = {
     books: [],          // разобранные книги
@@ -5815,40 +5809,71 @@ function activeDiffMarks() {
     return diffMarks(APP.scope);
 }
 
-/** Легенда режима различий. Кроме расшифровки цветов честно перечисляет то,
-    чего на холсте быть не может: объект, удалённый во второй версии, в этой
-    книге не существует, узла у него нет — и наоборот. Иначе выключенная
-    пометка читалась бы как «изменений такого рода не было». */
-function renderDiffLegend() {
-    const box = $('#lg-diff');
-    if (!box) return;
+/** Сводка различий в правой панели — там же, где показываются объекты.
+ *
+ *  Раньше это жило в легенде графа. Легенда объясняет, как читать холст:
+ *  цвета связей, пометки на узлах. Список изменившихся объектов с их
+ *  характеристиками — не про чтение холста, а про содержание книги, и место
+ *  ему в панели объекта, где такие описания уже показываются.
+ *
+ *  Строки берём из того же diffBooks, что рисует «Сравнение версий»:
+ *  расходиться в показаниях двум экранам нельзя. */
+function showDiffPanel() {
     const d = activeDiffMarks();
-    if (!d.пара) { box.hidden = true; return; }
-    box.hidden = false;
+    if (!d.пара) { $('#graph-details').hidden = true; return; }
 
-    const ЦВЕТ = { add: '#15803d', chg: '#b45309', del: '#b91c1c' };
-    const ПОДПИСЬ = { add: 'появился', chg: 'изменился', del: 'исчезнет' };
-    const строки = ['add', 'chg', 'del'].filter(k => d.сч[k]).map(k =>
-        '<div class="lgd-row"><span class="lgd-dot" style="background:' + ЦВЕТ[k] + '"></span>' +
-        ПОДПИСЬ[k] + ' <b>' + fmtNum(d.сч[k]) + '</b></div>').join('');
+    const ВИД = { add: 'появился', chg: 'изменился', del: 'исчезнет' };
+    const строки = [];
+    d.marks.forEach((вид, id) => {
+        const n = APP.graph.index.get(id);
+        if (n) строки.push({ вид, n });
+    });
+    // Сначала появившиеся и исчезающие, потом изменившиеся: смена состава
+    // важнее правки содержимого, а внутри — по типу объекта и имени.
+    const вес = { add: 0, del: 1, chg: 2 };
+    строки.sort((a, b) => вес[a.вид] - вес[b.вид] ||
+        a.n.type.localeCompare(b.n.type) || String(a.n.label).localeCompare(String(b.n.label)));
 
-    // Объекты другой стороны: на этой книге узлов у них нет
+    const где = n => {
+        const sh = n.sheet || (n.ref || {}).sheet;
+        if (sh) return 'лист «' + sh + '»';
+        if (n.type === 'sheet') return plural((n.ref || {}).formulaCount || 0, ['формула', 'формулы', 'формул']);
+        if (n.type === 'query') return plural(((n.ref || {}).steps || []).length, ['шаг', 'шага', 'шагов']);
+        return (NODE_TYPES[n.type] || {}).label || n.type;
+    };
+
+    $('#gd-title').innerHTML = 'Отличия от книги<br><span style="font-weight:600;color:var(--text-muted);' +
+        'font-size:12px;overflow-wrap:anywhere">' + esc(d.пара) + '</span>';
+
     const нет = d.сторона === 'поздняя' ? d.пропало : d.появилось;
     const ярлык = d.сторона === 'поздняя' ? 'Исчезло в этой версии' : 'Появится во второй версии';
 
-    box.innerHTML =
-        '<div class="lgd-head">Отличия от ' + esc(d.пара) + '</div>' +
-        (строки || '<div class="lgd-row">различий среди объектов графа нет</div>') +
-        // На общем плане помеченные узлы приходится выискивать глазами — даём
-        // перейти к ним одним нажатием, как «Вписать», но только по отличиям.
-        (d.сч.add + d.сч.chg + d.сч.del
-            ? '<button class="lg-more" id="lg-diff-fit" style="margin-top:6px">Показать отличия ▸</button>'
-            : '') +
+    $('#gd-body').innerHTML =
+        '<div class="gd-section"><h4>Помечено на графе</h4>' +
+        (строки.length
+            ? '<div class="muted" style="font-size:11.5px;margin-bottom:7px">Оранжевой рамкой — <b>' +
+              // plural сам подставляет число — своё добавлять не нужно
+              plural(строки.length, ['объект', 'объекта', 'объектов']) + '</b>' +
+              '. Нажмите, чтобы перейти к объекту.</div>' +
+              '<div class="gd-link-list">' + строки.map(r =>
+                '<div class="gd-link" data-focus-node="' + esc(r.n.id) + '">' +
+                nodeGlyph(r.n.type) +
+                '<span class="gd-link-body"><span class="gd-link-name">' + esc(r.n.label) + '</span>' +
+                '<span class="gd-link-path"><b style="color:' + DIFF_RING + '">' + ВИД[r.вид] + '</b> · ' +
+                esc(где(r.n)) + '</span></span></div>').join('') + '</div>'
+            : '<div class="muted" style="font-size:12px">Среди объектов графа отличий нет: правки задели только то, ' +
+              'что на холст не выносится — скрытые имена, содержимое ячеек, закрытые части файла.</div>') +
+        '</div>' +
         (нет && нет.length
-            ? '<div class="lgd-gone"><b>' + ярлык + ':</b> ' + fmtNum(нет.length) + ' — ' +
-              esc(нет.slice(0, 6).join(', ')) + (нет.length > 6 ? ' и ещё ' + fmtNum(нет.length - 6) : '') +
-              '<br>Узлов у них здесь нет: полный разбор — в «Сравнении версий».</div>'
+            ? '<div class="gd-section"><h4>' + esc(ярлык) + ': ' + fmtNum(нет.length) + '</h4>' +
+              '<div class="gd-link-list">' + нет.map(x =>
+                '<div class="gd-link" style="cursor:default"><span class="gd-link-body">' +
+                '<span class="gd-link-name">' + esc(x) + '</span></span></div>').join('') + '</div>' +
+              '<div class="muted" style="font-size:11.5px;margin-top:7px">Узлов у них здесь нет — они есть только ' +
+              'во второй версии. Полный разбор со значениями «было → стало» — в «Сравнении версий».</div></div>'
             : '');
+
+    $('#graph-details').hidden = false;
 }
 
 /* ─────────────── РАЗБОР ПО КОЛОНКАМ ─────────────── */
@@ -6532,7 +6557,12 @@ function cyElements() {
             /* 'none', а не пустая строка: у рамки «Книга» своей иконки нет, и
                парсер стилей Cytoscape на пустом значении падает. Всплыло только
                при двух книгах сразу — одна книга рамку не рисует. */
-            el.data.icon = (el.data.warn ? nodeIcon(el.data.type, null, '#dc2626')
+            /* В режиме различий оранжевое кольцо перебивает красное «есть
+               ошибки» и серый пунктир «скрыт»: колец у иконки одно, а режим
+               включают именно затем, чтобы видеть отличия. Ошибки и скрытость
+               видны без режима и в панели объекта. */
+            el.data.icon = (дифф.has(el.data.id) ? nodeIcon(el.data.type, null, DIFF_RING)
+                          : el.data.warn ? nodeIcon(el.data.type, null, '#dc2626')
                           : el.data.hidden ? nodeIcon(el.data.type, null, '#94a3b8', true)
                           : nodeIcon(el.data.type)) || 'none';
             return el;
@@ -6857,16 +6887,6 @@ function renderGraph() {
                 }, v.dash === 'dashed' ? { 'line-dash-pattern': [6, 3] } : {},
                    v.arrow ? {} : { 'target-arrow-shape': 'none' }),
             })),
-
-            /* Пометки различий. Подложка, а не рамка: рамка узла уже занята —
-               красная означает ошибки внутри, пунктирная скрытый лист. Цвета те
-               же, что на «Сравнении версий», чтобы не заводить второй словарь. */
-            { selector: 'node.dm-add', style: {
-                'underlay-color': '#15803d', 'underlay-opacity': .3, 'underlay-padding': 9 } },
-            { selector: 'node.dm-chg', style: {
-                'underlay-color': '#b45309', 'underlay-opacity': .3, 'underlay-padding': 9 } },
-            { selector: 'node.dm-del', style: {
-                'underlay-color': '#b91c1c', 'underlay-opacity': .3, 'underlay-padding': 9 } },
 
             /* z-index обязателен: без него порядок отрисовки погашенного и живого
                узла не определён, и серая масса ложилась поверх подсвеченных.
@@ -7397,6 +7417,14 @@ function gearPath(cx, cy, rOut, rIn, teeth, hole) {
 }
 
 const ICON_W = '#fff';   // белым режем прорези внутри силуэта
+
+/* Цвет пометки различий — один на все виды: «появился», «изменился»,
+   «исчезнет». Подобран по CIEDE2000 против всех занятых цветов: 21.5 до
+   красного у ошибок, 25.5 до жёлтого у имён — с отрывом лучший из дюжины
+   кандидатов, остальные подходили ближе 20 к чему-нибудь своему. Держать три
+   цвета было не из чего: свободного места в палитре на три оттенка нет, а
+   какое именно отличие — читается в правой панели. */
+const DIFF_RING = '#f97316';
 const ICONS = {
   // лист — та же сетка, что у «Листов и таблиц» в меню
   sheet:   '<path d="M2.5 3h19v18h-19z"/><path d="M2.5 9h19M2.5 15h19M8.5 3v18" stroke="'+ICON_W+'" stroke-width="1.7" fill="none"/>',
@@ -7640,8 +7668,6 @@ function buildLegend() {
     $('#lg-marks-box').hidden = !marks.length;
     $('#lg-marks').innerHTML = marks.join('');
 
-    renderDiffLegend();
-
     /* ── схема связей типов. Плоский перечень «кто с кем» читался как груда:
           у восьми типов по три-четыре соседа, и глазу не за что зацепиться.
           Поэтому здесь не перечень, а поток данных книги: сверху источники,
@@ -7874,6 +7900,10 @@ function initEvents() {
     $('#opt-diff').addEventListener('change', e => {
         APP.diffOnGraph = e.target.checked;
         renderGraph();
+        // Панель открывается вместе с режимом: список изменившихся объектов —
+        // это и есть ответ на «что поменялось», ради которого режим включают.
+        if (APP.diffOnGraph) showDiffPanel();
+        else $('#graph-details').hidden = true;
     });
 
     /* Выбор книги. Меняет только область просмотра — книги остаются
@@ -7930,16 +7960,6 @@ function initEvents() {
         APP.showHiddenNames = !APP.showHiddenNames;
         renderSheets();
     };
-    /* Переход к помеченным узлам. Слушаем контейнер: легенда перерисовывается
-       целиком, и повешенный на кнопку обработчик пропал бы вместе с ней. */
-    $('#lg-diff').addEventListener('click', e => {
-        if (!e.target.closest('#lg-diff-fit')) return;
-        const cy = window.__cy;
-        if (!cy) return;
-        const m = cy.nodes('.dm-add, .dm-chg, .dm-del');
-        if (m.length) cy.animate({ fit: { eles: m, padding: 140 } }, { duration: 350 });
-    });
-
     $('#lg-marks-more').onclick = () => {
         const m = $('#lg-marks'), b = $('#lg-marks-more');
         m.hidden = !m.hidden;
