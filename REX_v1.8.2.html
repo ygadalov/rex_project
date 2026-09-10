@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v1.8.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v1.8.2 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -95,17 +95,10 @@
     --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
     --shadow-lg: 0 10px 25px -5px rgba(0,0,0,0.08), 0 8px 10px -6px rgba(0,0,0,0.04);
 
-    /* Палитра узлов графа = роль в потоке данных.
-       Один цвет = один смысл, повторяется во всех вкладках (легенда, таблицы, граф). */
-    --n-source:   #115e59;   /* внешний источник: БД, файл, папка, web   */
-    --n-query:    #7c3aed;   /* запрос Power Query                        */
-    --n-table:    #059669;   /* умная таблица (ListObject)                */
-    --n-sheet:    #2563eb;   /* лист                                      */
-    --n-name:     #d97706;   /* именованный диапазон                      */
-    --n-pivot:    #db2777;   /* сводная таблица                           */
-    --n-measure:  #4f46e5;   /* мера модели данных                        */
-    --n-extbook:  #64748b;   /* внешняя книга                             */
-    --n-conn:     #0891b2;   /* подключение                               */
+    /* Цвета узлов графа сюда подставляет сам NODE_TYPES — см. syncNodeVars().
+       Раньше они были вписаны руками и разъезжались: --n-name застряла на охре
+       #d97706, когда именованные диапазоны уже стали жёлтыми #eab308. Ошибка не
+       всплыла только потому, что переменную никто не читал. */
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -382,7 +375,6 @@ tr.row-link { cursor: pointer; }
 .pill-red    { background: var(--danger-light);  color: #b91c1c; }
 .pill-purple { background: #ede9fe; color: var(--purple-dark); }
 .pill-teal   { background: #ccfbf1; color: #0f766e; }
-.pill-pink   { background: #fce7f3; color: #be185d; }
 
 /* Бейдж достоверности разбора — честно показываем пределы формата */
 .confidence {
@@ -597,7 +589,6 @@ tr.row-link { cursor: pointer; }
 .graph-legend.focus-mode .lg-scroll { max-height: min(32vh, 250px); }
 .lg-edge.is-static { cursor: default; }
 .lg-edge.is-static:hover { background: none; }
-.lg-focus-note { font-size: 10px; color: var(--text-muted); line-height: 1.45; padding: 2px 6px 0; font-weight: 500; }
 
 /* Влияние: бейдж уровня и фильтр по нему */
 /* Разбор по колонкам */
@@ -714,7 +705,6 @@ tr.row-link { cursor: pointer; }
 .lg-flow-arrow { color: var(--primary); font-size: 13px; font-weight: 700; line-height: 1; margin: 4px 0 4px 6px; }
 .lg-matrix { margin-top: 5px; display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; }
 .lg-mrow { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; line-height: 1.6; padding: 1px 0; }
-.lg-mrow .lg-mfrom { font-weight: 700; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 4px; }
 .lg-mrow .lg-mto { color: var(--text-muted); }
 
 /* Подсказка на связи: только название типа и вес. Развёрнутое объяснение
@@ -773,7 +763,6 @@ tr.row-link { cursor: pointer; }
     border: 1px solid transparent; transition: background .15s, border-color .15s;
 }
 .gd-link:hover { background: var(--primary-light); border-color: var(--primary); }
-.gd-link .gd-count { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); }
 .gd-link-body { min-width: 0; flex: 1; }
 /* Раньше здесь было nowrap + многоточие. На реальной книге из 46 объектов
    обрезалось 9: текст получает 245 px, а 90% названий требуют до 360 px —
@@ -831,11 +820,8 @@ tr.row-link { cursor: pointer; }
 }
 .formula-box .f-sheet { background: #dbeafe; color: #1e40af; border-radius: 3px; padding: 0 2px; font-weight: 700; }
 .formula-box .f-table { background: #d1fae5; color: #065f46; border-radius: 3px; padding: 0 2px; font-weight: 700; }
-.formula-box .f-name  { background: #fef3c7; color: #92400e; border-radius: 3px; padding: 0 2px; font-weight: 700; }
-.formula-box .f-ext   { background: #e2e8f0; color: #334155; border-radius: 3px; padding: 0 2px; font-weight: 700; }
 .formula-box .f-err   { background: #fee2e2; color: #b91c1c; border-radius: 3px; padding: 0 2px; font-weight: 700; }
 .formula-box .f-vol   { background: #ffedd5; color: #9a3412; border-radius: 3px; padding: 0 2px; font-weight: 700; }
-.formula-box .f-str   { color: #059669; }
 
 /* Шаги запроса Power Query */
 .pq-steps { display: flex; flex-direction: column; gap: 0; }
@@ -1495,7 +1481,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.8.2';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1612,6 +1598,7 @@ function goPage(page) {
     });
     $$('.page-content').forEach(p => p.classList.toggle('active', p.id === 'page-' + page));
     document.body.classList.toggle('graph-page', page === 'graph');
+    if (page === 'graph') flushGraph();   // если очередь простоя не успела
     $('#sidebar').classList.remove('open');
     $('#overlay').classList.remove('open');
     window.scrollTo(0, 0);
@@ -3733,8 +3720,25 @@ function renderAll() {
     renderQuality();
     renderCleanup();
     renderReport();
-    renderGraph();
     renderBadges();
+    /* Граф не рисуем здесь: после разбора открывается «Обзор», а построение
+       холста с раскладкой занимает ~450 мс из ~1100 мс всего ожидания. Ставим
+       его в очередь простоя — к первому клику по «Графу связей» он обычно уже
+       готов, а если нет, goPage() достроит его сам. */
+    scheduleGraph();
+}
+
+let graphDirty = false;
+function scheduleGraph() {
+    graphDirty = true;
+    const idle = window.requestIdleCallback || (f => setTimeout(f, 80));
+    idle(flushGraph, { timeout: 1500 });
+}
+/** Достроить граф прямо сейчас, если очередь простоя до него ещё не дошла. */
+function flushGraph() {
+    if (!graphDirty) return;
+    graphDirty = false;
+    renderGraph();
 }
 
 function renderBadges() {
@@ -7065,6 +7069,14 @@ function initEvents() {
 }
 
 /* ─── старт ─── */
+/* Один источник истины на цвета типов: NODE_TYPES. CSS-переменные --n-* нужны
+   плашкам «Обзора», и раньше их значения дублировались в :root вручную. */
+function syncNodeVars() {
+    const r = document.documentElement.style;
+    Object.entries(NODE_TYPES).forEach(([t, v]) => r.setProperty('--n-' + t, v.color));
+}
+syncNodeVars();
+
 // Шестерёнку в меню рисует тот же генератор, что и иконку запроса на графе:
 // две разные картинки для одного смысла разъехались бы при первой же правке.
 document.querySelectorAll('svg[data-gear]').forEach(el => { el.innerHTML = ICONS.query; });
