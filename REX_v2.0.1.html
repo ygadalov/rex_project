@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.0.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.0.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1035,7 +1035,7 @@ table.matrix td.cell[data-n] { cursor: default; }
         <!-- Сравнение включается только когда книг загружено две и больше:
              см. renderBadges(). Иначе пункт вводил бы в заблуждение. -->
         <button class="nav-item" data-page="diff" role="tab" aria-selected="false" aria-controls="page-diff" disabled>
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h9"/><path d="m10 4 3 3-3 3"/><path d="M20 17h-9"/><path d="m14 14-3 3 3 3"/></svg></span>
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="1.5" y="3" width="9.5" height="13" rx="1"/><path d="M4.55 7.9 6.25 6.2v7"/><path d="M4.25 13.2h4"/><rect x="13" y="8" width="9.5" height="13" rx="1"/><path d="M15.65 12.7a2.3 2.3 0 0 1 4.1 1.1c0 1.7-4.1 3-4.1 4.4h4.4"/></svg></span>
             <span class="nav-label">Сравнение версий</span>
             <span class="nav-badge" id="badge-diff" hidden></span>
         </button>
@@ -1568,7 +1568,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.0.1';
 
 const APP = {
     books: [],          // разобранные книги
