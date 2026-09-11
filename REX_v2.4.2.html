@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.4.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.4.2 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -352,7 +352,11 @@ body.graph-page .main-wrapper { height: 100vh; overflow: hidden; }
 .health-ring .hr-num { font-size: 29px; font-family: 'JetBrains Mono', monospace; line-height: 1; }
 .health-ring .hr-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-muted); margin-top: 3px; }
 .health-bars { flex: 1; min-width: 230px; display: flex; flex-direction: column; gap: 9px; }
-.health-bar-row { display: grid; grid-template-columns: 130px 1fr 40px; gap: 10px; align-items: center; font-size: 12px; }
+/* Колонка названий — по самому длинному названию, а не по фиксированным
+   130 px: «Производительность» со значком (i) в них не влезала и переносилась.
+   max-content держит это и при подменном шрифте, пока грузится Manrope. */
+.health-bar-row { display: grid; grid-template-columns: max-content 1fr 40px; gap: 10px; align-items: center; font-size: 12px; }
+.health-bar-row > span:first-child { display: inline-flex; align-items: center; white-space: nowrap; }
 .health-bar-track { height: 7px; border-radius: 4px; background: var(--border-light); overflow: hidden; }
 .health-bar-fill { display: block; height: 100%; border-radius: 4px; transition: width .5s ease; }
 .health-bar-num { text-align: right; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12px; }
@@ -716,7 +720,9 @@ tr.row-link { cursor: pointer; }
 }
 .imp-cav.off { background: var(--bg); border-color: var(--border); opacity: .6; }
 .imp-cav input { margin-top: 2px; width: 14px; height: 14px; flex-shrink: 0; accent-color: var(--primary); }
-.imp-cav b { display: block; margin-bottom: 2px; }
+/* Заголовок оговорки был блоком — из-за этого кнопка (i) после него
+   оказывалась на отдельной строке. Текста под ним больше нет. */
+.imp-cav b { display: inline; }
 .imp-cav .cav-note { color: var(--text-muted); }
 .imp-none { padding: 9px 11px; border-radius: 8px; background: #f0fdf4; border: 1px solid #bbf7d0; font-size: 12px; color: #166534; }
 
@@ -1043,7 +1049,7 @@ table.matrix td.cell[data-n] { cursor: default; }
     .health-bars { min-width: 100%; }
     /* Уведомление сверху перекрывало кнопку меню — на телефоне уводим стек вниз */
     .notification-stack { top: auto; bottom: 14px; left: 14px; right: 14px; max-width: none; }
-    .health-bar-row { grid-template-columns: 108px 1fr 32px; font-size: 10.5px; }
+    .health-bar-row { grid-template-columns: max-content 1fr 32px; font-size: 10.5px; }
     .issue-body { padding-left: 15px; }
     /* На телефоне граф остаётся доступным, но не претендует на роль главного экрана */
     .graph-body { flex-direction: column; }
@@ -1223,7 +1229,8 @@ table.matrix td.cell[data-n] { cursor: default; }
     <div id="overview-file"></div>
     <div class="kpi-grid" id="overview-kpi"></div>
     <div class="card">
-        <div class="card-title">Индекс здоровья книги <span class="hint">0 — всё плохо, 100 — к файлу нет претензий</span></div>
+        <div class="card-title">Индекс здоровья книги<span id="health-why"></span>
+            <span class="hint">0 — всё плохо, 100 — к файлу нет претензий</span></div>
         <div class="health" id="overview-health"></div>
     </div>
     <div class="card">
@@ -1435,8 +1442,7 @@ table.matrix td.cell[data-n] { cursor: default; }
     </div>
 
     <div class="card">
-        <div class="card-title">Разбор по колонкам
-            <span class="hint">какая формула стоит в колонке и где её порвали</span>
+        <div class="card-title">Разбор по колонкам<span id="col-why"></span>
             <span style="flex:1"></span>
             <select id="col-sheet" class="cl-search" aria-label="Лист для разбора"></select>
             <button class="btn btn-sm btn-outline" id="btn-col-csv">CSV</button>
@@ -1613,7 +1619,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.4.1';
+const APP_VERSION = '2.4.2';
 
 const APP = {
     books: [],          // разобранные книги
@@ -3762,6 +3768,32 @@ function runAudit(books, graph) {
     return issues;
 }
 
+/* Что стоит за каждой строкой индекса и куда идти смотреть. Названия
+   категорий короткие — «Гигиена» без пояснения не говорит ничего. */
+const HEALTH_NOTES = {
+    'Ошибки': 'Формулы и ссылки, которые уже не считаются: <code>#REF!</code> после ' +
+        'удаления листа или строки, <code>#ДЕЛ/0!</code>, <code>#Н/Д</code>, именованные ' +
+        'диапазоны, показывающие в никуда.<br><br>Смотреть: <b>«Качество данных»</b>, ' +
+        'красный уровень важности.',
+    'Связи': 'Откуда книга берёт данные и цело ли это: внешние книги и пути к ним, ' +
+        'ссылки через <code>ДВССЫЛ</code>, которые не видит ни один разбор, листы, ' +
+        'ни с чем не связанные.<br><br>Смотреть: <b>«Формулы и ссылки»</b> — внешние ' +
+        'ссылки и матрица связей между листами, и <b>«Граф связей»</b>.',
+    'Структура': 'Как книга устроена и что в ней спрятано: скрытые и veryHidden листы, ' +
+        'защита листов, «призрачный» диапазон далеко за данными, колонки, собранные ' +
+        'руками вместо протяжки.<br><br>Смотреть: <b>«Листы и таблицы»</b> и ' +
+        '<b>«Формулы и ссылки» → «Разбор по колонкам»</b>.',
+    'Производительность': 'То, из-за чего книга думает и тяжело открывается: ссылки на ' +
+        'целые колонки (<code>A:A</code>), летучие функции (<code>ТДАТА</code>, ' +
+        '<code>СМЕЩ</code>), формулы-простыни.<br><br>Смотреть: <b>«Формулы и ссылки»</b> — ' +
+        'самые используемые функции и самые длинные формулы.',
+    'Гигиена': 'Мусор, который ни на что не влияет, но тащится с книгой и раздувает её: ' +
+        'скрытые имена от надстроек и шаблонов, неиспользуемые имена и запросы Power Query, ' +
+        'меры без единого отчёта, личные данные в свойствах файла.<br><br>Смотреть: ' +
+        '<b>«Качество данных»</b>, синий уровень, и <b>«Очистка книги»</b> — там же ' +
+        'собирается макрос под вашу книгу.',
+};
+
 /** Индекс здоровья: 100 минус штрафы, с разбивкой по категориям. */
 function computeHealth(issues) {
     const cats = ['Ошибки', 'Связи', 'Структура', 'Производительность', 'Гигиена'];
@@ -4184,6 +4216,14 @@ function renderOverview() {
 
     /* индекс здоровья */
     const h = APP.health;
+    $('#health-why').innerHTML = infoBtn(
+        'Каждая из пяти строк начинается со 100, и каждое сработавшее правило снимает ' +
+        'баллы: чем оно важнее и чем больше находок, тем больше штраф. Считается по ' +
+        'логарифму, а не по числу находок напрямую — 500 ошибок не должны выглядеть ' +
+        '«в сто раз хуже», чем пять.<br><br>' +
+        'Итог наверху — среднее по пяти строкам. Это оценка файла, а не работы: книга ' +
+        'может считать правильно и при 40 баллах, просто её тяжело сопровождать.<br><br>' +
+        'Наведитесь на название строки — там сказано, что в неё входит и где это смотреть.');
     const col = v => v >= 80 ? '#10b981' : v >= 60 ? '#f59e0b' : '#ef4444';
     const R = 50, C = 2 * Math.PI * R;
     $('#overview-health').innerHTML =
@@ -4195,10 +4235,19 @@ function renderOverview() {
           '</svg>' +
           '<div class="hr-val"><div class="hr-num" style="color:' + col(h.total) + '">' + h.total + '</div><div class="hr-cap">из 100</div></div>' +
         '</div>' +
-        '<div class="health-bars">' + h.cats.map(c =>
-            '<div class="health-bar-row"><span>' + esc(c) + '</span>' +
+        '<div class="health-bars">' + h.cats.map(c => {
+            // К общему пояснению добавляем то, из чего сложилось именно это
+            // число: иначе «Гигиена 41» остаётся оценкой без основания.
+            const свои = scopedIssues().filter(i => i.category === c);
+            const из = свои.length
+                ? '<br><br><b>В этой книге сработало ' + plural(свои.length, ['правило', 'правила', 'правил']) + ':</b><br>' +
+                  свои.slice(0, 6).map(i => '• ' + esc(i.title) + ' — ' + fmtNum(i.count)).join('<br>') +
+                  (свои.length > 6 ? '<br>…и ещё ' + (свои.length - 6) : '')
+                : '<br><br><b>В этой книге претензий по этой категории нет</b> — отсюда и 100.';
+            return '<div class="health-bar-row"><span>' + esc(c) + infoBtn(HEALTH_NOTES[c] + из) + '</span>' +
             '<span class="health-bar-track"><span class="health-bar-fill" style="width:' + h.scores[c] + '%;background:' + col(h.scores[c]) + '"></span></span>' +
-            '<span class="health-bar-num" style="color:' + col(h.scores[c]) + '">' + h.scores[c] + '</span></div>').join('') +
+            '<span class="health-bar-num" style="color:' + col(h.scores[c]) + '">' + h.scores[c] + '</span></div>';
+        }).join('') +
         '</div>';
 
     /* топ находок */
@@ -6007,6 +6056,18 @@ function renderColumns() {
 
     const cnt = { all: cols.length, even: 0, torn: 0, manual: 0 };
     cols.forEach(c => cnt[c.kind]++);
+
+    // «Порвали» — слово из разговора, а не из Excel: объясняем, что за ним
+    // стоит, там же, где оно раньше висело подписью к заголовку.
+    $('#col-why').innerHTML = infoBtn(
+        'Колонку в Excel обычно <b>протягивают</b>: одна формула на весь диапазон. ' +
+        '«Порвали» — значит эту ровность нарушили: в середину вбили руками число ' +
+        'вместо формулы или часть ячеек считает по другой формуле.<br><br>' +
+        'Excel на это не ругается — ошибки нет, просто часть строк считается не так, ' +
+        'как остальные. Глазами такое почти не находится: колонка выглядит обычной.<br><br>' +
+        'Ниже колонки разложены на три вида — <b>ровные</b> (' + cnt.even + '), ' +
+        '<b>рваные</b> (' + cnt.torn + '), <b>собраны руками</b> (' + cnt.manual + '). ' +
+        'В таблице колонка «Разрывы» показывает, в каких именно строках шаблон подменили.');
     const pick = APP.colKind || 'all';
     $('#col-kinds').innerHTML =
         '<button class="col-kind' + (pick === 'all' ? ' active' : '') + '" data-kind="all" style="--ck:var(--primary)">' +
