@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.3.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.4.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -484,6 +484,38 @@ tr.row-link { cursor: pointer; }
     transition: border-color .15s, color .15s, background .15s;
 }
 .node-glyph { flex-shrink: 0; display: block; }
+
+/* ─── Подсказка (i) ───────────────────────────────────────────────────────
+   Пояснения занимали самое дорогое место — до первого элемента управления:
+   на «Очистке» 347 px из 900, на «Листах» 460. Текст никуда не делся, он
+   убран под кнопку. Значок — SVG на той же сетке 24 с обводкой 2, что и
+   остальные иконки: у символьного варианта кружок рисует рамка, а букву
+   шрифт, и центрируются они независимо друг от друга. */
+.ib {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; flex-shrink: 0; margin-left: 6px; padding: 0;
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    vertical-align: middle; transition: color .15s;
+}
+.ib svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; }
+.ib:hover, .ib[aria-expanded="true"] { color: var(--primary); }
+.ib:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 50%; }
+
+/* Фон темнее, чем у карточки: всплывашка лежит поверх белого и должна
+   от него отделяться. */
+.ib-pop {
+    position: absolute; z-index: 80; max-width: 440px; padding: 11px 13px;
+    background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 9px;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, .13);
+    font-size: 12.5px; line-height: 1.6; font-weight: 500; white-space: normal;
+}
+.ib-pop code { background: #e2e8f0; padding: 1px 4px; border-radius: 4px; font-size: 11.5px; }
+.ib-pop b, .ib-pop strong { color: #0f172a; }
+.ib-pop::before {
+    content: ''; position: absolute; top: -6px; left: 14px; width: 10px; height: 10px;
+    background: #f1f5f9; border-left: 1px solid #cbd5e1; border-top: 1px solid #cbd5e1;
+    transform: rotate(45deg);
+}
 /* Кружок уровня — риска очистки и влияния листа. Раньше здесь стоял эмодзи
    (🟢 🟡 🔴 🔵): он рисуется шрифтом системы, поэтому на каждой ОС свой размер,
    свой блеск и своя базовая линия, и рядом с подписью в 10 px выглядел крупнее
@@ -700,7 +732,6 @@ tr.row-link { cursor: pointer; }
 .cl-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .cl-name { font-weight: 700; font-size: 13px; }
 .cl-risk { font-size: 10.5px; font-weight: 700; color: var(--risk-color); text-transform: uppercase; letter-spacing: .3px; }
-.cl-note { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin-top: 3px; }
 .cl-num { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: var(--text-secondary); flex-shrink: 0; }
 .cl-opts { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light); font-size: 12px; }
 /* Имя может быть на иврите или арабском: без изоляции браузер переставляет
@@ -933,7 +964,6 @@ tr.row-link { cursor: pointer; }
 .issue-icon svg { width: 100%; height: 100%; stroke: currentColor; stroke-width: 2; fill: none; }
 .issue-main { flex: 1; min-width: 0; }
 .issue-title { display: block; font-size: 13.5px; font-weight: 700; margin-bottom: 2px; }
-.issue-desc { display: block; font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
 .issue-count { font-family: 'JetBrains Mono', monospace; font-weight: 800; font-size: 15px; color: var(--sev-color); flex-shrink: 0; }
 .issue-chevron { flex-shrink: 0; color: var(--text-muted); transition: transform .2s; }
 .issue-chevron svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 2.4; fill: none; display: block; }
@@ -1169,11 +1199,7 @@ table.matrix td.cell[data-n] { cursor: default; }
     <div id="loaded-list" style="margin-top:16px"></div>
 
     <div class="card" style="margin-top:16px">
-        <div class="card-title">Что именно достаётся из файла</div>
-        <p class="muted" style="margin-bottom:12px;line-height:1.65">
-            Возможности жёстко ограничены форматом, а не инструментом. Ниже — честная картина; те же бейджи
-            вы увидите на соответствующих вкладках.
-        </p>
+        <div class="card-title">Что именно достаётся из файла<span id="cap-why"></span></div>
         <div class="table-box">
             <table class="wide">
                 <thead><tr><th>Что</th><th>xlsx / xlsm</th><th>xlsb</th><th>xls</th></tr></thead>
@@ -1320,8 +1346,7 @@ table.matrix td.cell[data-n] { cursor: default; }
         <h1 class="page-title">Листы и таблицы <span class="subtitle">инвентарь книги</span></h1>
     </div>
     <div class="card">
-        <div class="card-title">Что можно удалить
-            <span class="hint" id="imp-sub"></span>
+        <div class="card-title">Что можно удалить<span id="imp-sub"></span>
             <span style="flex:1"></span>
             <button class="btn btn-sm btn-outline" id="btn-imp-csv">План очистки (CSV)</button>
         </div>
@@ -1493,16 +1518,10 @@ table.matrix td.cell[data-n] { cursor: default; }
     </div>
 
     <div class="card">
-        <div class="card-title">Почему это нельзя сделать руками</div>
-        <p class="muted" style="line-height:1.7;margin:0">
-            У «мусорных» имён стоит признак <code>hidden</code> — Excel не показывает их
-            в Диспетчере имён (Ctrl+F3) ни при каком фильтре, поэтому выделить и удалить их
-            нечем. Остаётся макрос. Удалять «всё скрытое» одной кнопкой опасно: среди скрытых
-            есть рабочие — служебные имена диаграмм, модель «Поиска решения», имена, на которых
-            держится условное форматирование. Поэтому ниже разбор по происхождению: выбираете
-            группы — REX собирает макрос под вашу книгу. Удаляет он не сразу: сначала
-            показывает список на отдельном листе и спрашивает, прежде чем что-то тронуть.
-        </p>
+        <!-- Текст под (i): он объясняет замысел раздела один раз, а место
+             занимал на каждом открытии. Заголовок остаётся — по нему видно,
+             что объяснение есть и где его взять. -->
+        <div class="card-title">Почему это нельзя сделать руками<span id="cleanup-why"></span></div>
         <div class="cleanup-warn" id="cleanup-empty" hidden></div>
         <div class="cleanup-warn" id="cleanup-vba" hidden></div>
     </div>
@@ -1514,15 +1533,7 @@ table.matrix td.cell[data-n] { cursor: default; }
             <span class="muted" id="cleanup-book"></span>
             <span class="muted" id="cleanup-protect"></span>
         </div>
-        <div class="cleanup-warn" id="cleanup-step">
-            <b>Макрос запускается дважды, но собирается один раз.</b>
-            <b>Запуск 1</b> — разведка: макрос ничего не удаляет, а строит лист «REX_очистка»
-            со списком и открывает его. Имена при этом на месте, и REX после такого прогона
-            покажет ровно то же самое — так и должно быть.
-            <b>Запуск 2</b> — Alt+F8 → <code>REX_CleanNames</code> → «Выполнить» ещё раз:
-            макрос увидит готовый отчёт и сам спросит, удалять ли. Скачивать модуль заново
-            и править в нём код не нужно — оба запуска это один и тот же макрос.
-        </div>
+        <div class="cleanup-warn" id="cleanup-step"></div>
     </div>
 
     <div class="card">
@@ -1600,7 +1611,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.3.1';
+const APP_VERSION = '2.4.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1623,6 +1634,22 @@ const APP = {
     scope: null,            // какую книгу показывать: null — все, иначе индекс в books
     diffOnGraph: false,     // помечать на графе отличия от второй версии
 };
+
+/* ───────────────────────── подсказки (i) ─────────────────────────
+   Текст пояснения кладём прямо в атрибут, а не в реестр по ключу: реестр
+   пришлось бы чистить при каждой перерисовке, иначе он растёт всю сессию.
+   Разметка внутри переживает поездку через атрибут: esc() кодирует её
+   сущностями, а браузер при чтении dataset их раскодирует обратно. */
+const INFO_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/>' +
+                 '<path d="M12 16v-4"/><path d="M12 8h.01"/></svg>';
+
+/** Кнопка (i) с пояснением. Возвращает разметку — вставляется рядом с
+    заголовком, к которому пояснение относится. */
+function infoBtn(html) {
+    if (!html) return '';
+    return '<button class="ib" type="button" aria-label="Пояснение" aria-expanded="false" ' +
+           'data-info="' + esc(html) + '">' + INFO_SVG + '</button>';
+}
 
 /* ───────────────────────── область просмотра ─────────────────────────
    Когда книг загружено больше одной, страницы складывали их данные в одну
@@ -4316,11 +4343,18 @@ function renderSheets() {
     const visibleNames = everyName.filter(n => !n.hidden && onScope(n));
     const allNames = APP.showHiddenNames ? everyName : visibleNames;
 
-    $('#names-note').textContent = (scope ? 'только лист «' + scope.name + '» · ' : '') + (hiddenNames.length
+    // В строке остаются числа, ради которых на неё смотрят; откуда берутся
+    // скрытые имена — под (i), иначе заголовок карточки уходит в две строки.
+    $('#names-note').innerHTML = esc((scope ? 'только лист «' + scope.name + '» · ' : '') + (hiddenNames.length
         ? 'видимых ' + fmtNum(visibleNames.length) + ' — столько же покажет Ctrl+F3 · скрытых ' +
-          fmtNum(hiddenNames.length) + ' (их создают надстройки и шаблоны, Диспетчер имён их не показывает)'
+          fmtNum(hiddenNames.length)
         : (visibleNames.length ? 'все ' + fmtNum(visibleNames.length) + ' видны в Ctrl+F3'
-           : scope ? 'имён, связанных с этим листом, нет' : ''));
+           : scope ? 'имён, связанных с этим листом, нет' : ''))) +
+        (hiddenNames.length ? infoBtn(
+            'Скрытые имена (<code>hidden</code>) создают надстройки, шаблоны и копирование листов ' +
+            'из чужих книг. Диспетчер имён (Ctrl+F3) их не показывает ни при каком фильтре — ' +
+            'поэтому и удалить их вручную нечем.<br><br>' +
+            'Разбор по происхождению и макрос под вашу книгу — на вкладке «Очистка книги».') : '');
     const nht = $('#names-hidden-toggle');
     nht.hidden = !hiddenNames.length;
     nht.textContent = APP.showHiddenNames
@@ -4655,16 +4689,19 @@ function renderModel() {
         parts.push(
             '<div style="margin-bottom:14px">' +
             '<span class="confidence partial"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>' +
-            'структура — да, выражения DAX и связи — нет</span></div>' +
-            '<div class="issue-why" style="margin-bottom:16px">' +
-            'Сама модель лежит в <span class="mono">' + esc(b.modelRaw || 'xl/model/item.data') + '</span> (' + fmtBytes(m.rawSize) + ') — ' +
-            'это сжатый бэкап движка xVelocity, а не XML. <strong>Выражения DAX и связи между таблицами оттуда в браузере ' +
-            'достать нельзя</strong>: это ограничение формата, а не инструмента.<br><br>' +
-            'Зато рядом Excel сохраняет состояние конструктора Power Pivot обычным XML — из него достоверно читаются ' +
-            '<strong>таблицы модели, их колонки и имена мер</strong>, включая те, что ещё не попали ни в один отчёт. ' +
-            'Всё, что ниже, — факты из файла, а не догадки.<br><br>' +
-            'Чтобы увидеть DAX и связи, выгрузите модель из самого Excel: ' +
-            '<span class="mono">Power Pivot → Управление</span> или DAX Studio.</div>');
+            'структура — да, выражения DAX и связи — нет</span>' +
+            // Сам вывод остаётся бейджем, «почему так» — под (i): это объяснение
+            // одно и то же для любой книги и читается один раз за всё знакомство.
+            infoBtn(
+                'Сама модель лежит в <span class="mono">' + esc(b.modelRaw || 'xl/model/item.data') + '</span> (' + fmtBytes(m.rawSize) + ') — ' +
+                'это сжатый бэкап движка xVelocity, а не XML. <b>Выражения DAX и связи между таблицами оттуда в браузере ' +
+                'достать нельзя</b>: это ограничение формата, а не инструмента.<br><br>' +
+                'Зато рядом Excel сохраняет состояние конструктора Power Pivot обычным XML — из него достоверно читаются ' +
+                '<b>таблицы модели, их колонки и имена мер</b>, включая те, что ещё не попали ни в один отчёт. ' +
+                'Всё, что ниже, — факты из файла, а не догадки.<br><br>' +
+                'Чтобы увидеть DAX и связи, выгрузите модель из самого Excel: ' +
+                '<span class="mono">Power Pivot → Управление</span> или DAX Studio.') +
+            '</div>');
 
         parts.push('<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">');
 
@@ -4744,8 +4781,8 @@ function renderQuality() {
             : iss.severity === 'major'
             ? '<svg viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>'
             : '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/></svg>') + '</span>' +
-        '<span class="issue-main"><span class="issue-title">' + esc(iss.title) + '</span>' +
-        '<span class="issue-desc">' + esc(iss.desc) + '</span></span>' +
+        '<span class="issue-main"><span class="issue-title">' + esc(iss.title) +
+            infoBtn(esc(iss.desc)) + '</span></span>' +
         '<span class="issue-count">' + fmtNum(iss.count) + '</span>' +
         '<span class="issue-chevron"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span>' +
         '</div>' +
@@ -6210,19 +6247,26 @@ function renderImpactPanel() {
         btn('used', 'Влияет — не трогать', IMPACT.used.color);
 
     const total = impactRows().length;
-    $('#imp-sub').textContent = 'листы и умные таблицы: из чего читают данные, а из чего — никто. ' +
-        'Синий — тоже «никто не читает», но это отчёт, а не мусор. ' +
-        'В плане очистки — все ' + fmtNum(total) + ' объектов книги, включая сводные, запросы и имена';
+    // Пояснение уходит под (i) у заголовка карточки: до правки оно занимало
+    // две строки над самым нужным — фильтром уровней.
+    $('#imp-sub').innerHTML = infoBtn(
+        'Листы и умные таблицы: из чего читают данные, а из чего — никто. ' +
+        'Синий — тоже «никто не читает», но это отчёт, а не мусор.<br><br>' +
+        'В плане очистки — все <b>' + fmtNum(total) + '</b> объектов книги, ' +
+        'включая сводные, запросы и имена.');
 
     const cav = impactCaveats();
     const off = APP.impactIgnore || new Set();
+    // Предисловие и текст каждой оговорки — под (i). Сам факт оговорки и
+    // её галка остаются на виду: это управление, а не пояснение.
+    const преамбула = 'Пока эти оговорки в силе, «ни на что не влияет» честно недостижимо — ' +
+        'максимум жёлтый. Снимайте галку, только если проверили сами.';
     $('#imp-caveats').innerHTML = cav.length
-        ? '<div class="muted" style="font-size:11.5px;margin-bottom:3px">' +
-          'Пока эти оговорки в силе, «ни на что не влияет» честно недостижимо — максимум жёлтый. ' +
-          'Снимайте галку, только если проверили сами.</div>' +
-          cav.map(c => '<label class="imp-cav' + (off.has(c.id) ? ' off' : '') + '">' +
+        ? cav.map((c, i) => '<label class="imp-cav' + (off.has(c.id) ? ' off' : '') + '">' +
               '<input type="checkbox" data-cav="' + c.id + '"' + (off.has(c.id) ? '' : ' checked') + '>' +
-              '<span><b>' + esc(c.title) + '</b><span class="cav-note">' + esc(c.text) + '</span></span></label>').join('')
+              '<span><b>' + esc(c.title) + '</b>' +
+              infoBtn(esc(c.text) + (i === 0 ? '<br><br>' + esc(преамбула) : '')) +
+              '</span></label>').join('')
         : '<div class="imp-none">Оговорок нет: ни макросов, ни ДВССЫЛ, ни модели данных, ни внешних связей. ' +
           'Значит «ни на что не влияет» здесь означает именно это.</div>';
 }
@@ -6267,11 +6311,15 @@ function renderCleanup() {
     const withVba = [scopeBook()].filter(b => b && b.vba).length;
     $('#cleanup-vba').hidden = !withVba;
     if (withVba) {
-        $('#cleanup-vba').innerHTML = '<b>В книге есть макросы VBA.</b> Код может обращаться к имени ' +
-            'по строке — такую ссылку не видно ни в формулах, ни в структуре файла, и REX её не покажет. ' +
-            'Сам файл от удаления не сломается, но макрос может перестать работать. ' +
-            'Если макросами пользуются, просмотрите модули (Alt+F11) на предмет <code>Range("Имя")</code> ' +
-            'и <code>Names("Имя")</code> — до того, как подтвердите удаление.';
+        // Сам факт риска остаётся на виду: предупреждение, спрятанное целиком
+        // за клик, человек просто не увидит. Под (i) уходит разбор.
+        $('#cleanup-vba').innerHTML = '<b>В книге есть макросы VBA.</b>' + infoBtn(
+            'Код может обращаться к имени по строке — такую ссылку не видно ни в формулах, ' +
+            'ни в структуре файла, и REX её не покажет. Сам файл от удаления не сломается, ' +
+            'но макрос может перестать работать.<br><br>' +
+            'Если макросами пользуются, просмотрите модули (Alt+F11) на предмет ' +
+            '<code>Range("Имя")</code> и <code>Names("Имя")</code> — до того, как ' +
+            'подтвердите удаление.');
     }
 
     const total = groups.reduce((a, g) => a + g.names.length, 0);
@@ -6289,11 +6337,14 @@ function renderCleanup() {
             '<input type="checkbox" data-group="' + g.group.id + '"' +
                 (on ? ' checked' : '') + (locked ? ' disabled' : '') + '>' +
             '<span class="cl-body">' +
-                '<span class="cl-head"><span class="cl-name">' + esc(g.group.label) + '</span>' +
+                '<span class="cl-head"><span class="cl-name">' + esc(g.group.label) +
+                    // Описание группы — под (i): четыре группы по три строки занимали
+                    // больше места, чем сам выбор, ради которого сюда приходят.
+                    infoBtn(esc(g.group.note) +
+                        (g.dead && g.group.id !== 'broken'
+                            ? ' <b>Из них уже мертвы (#REF!): ' + fmtNum(g.dead) + '.</b>' : '')) +
+                '</span>' +
                 '<span class="cl-risk">' + dotHTML(r.color) + ' ' + r.label + '</span></span>' +
-                '<span class="cl-note">' + esc(g.group.note) +
-                    (g.dead && g.group.id !== 'broken'
-                        ? ' <b>Из них уже мертвы (#REF!): ' + fmtNum(g.dead) + '.</b>' : '') + '</span>' +
             '</span>' +
             '<span class="cl-num">' + fmtNum(g.names.length) + '</span></label>';
     }).join('') || '<div class="empty-state">Скрытых имён нет</div>';
@@ -6302,6 +6353,17 @@ function renderCleanup() {
                          .reduce((a, g) => a + g.names.length, 0);
     $('#cleanup-sum').textContent = 'скрытых имён ' + fmtNum(total) +
         ' · выбрано к удалению ' + fmtNum(picked);
+
+    $('#cleanup-why').innerHTML = infoBtn(
+        'У «мусорных» имён стоит признак <code>hidden</code> — Excel не показывает их ' +
+        'в Диспетчере имён (Ctrl+F3) ни при каком фильтре, поэтому выделить и удалить их ' +
+        'нечем. Остаётся макрос.<br><br>' +
+        'Удалять «всё скрытое» одной кнопкой опасно: среди скрытых есть рабочие — служебные ' +
+        'имена диаграмм, модель «Поиска решения», имена, на которых держится условное ' +
+        'форматирование. Поэтому ниже разбор по происхождению: выбираете группы — REX ' +
+        'собирает макрос под вашу книгу.<br><br>' +
+        'Удаляет он не сразу: сначала показывает список на отдельном листе и спрашивает, ' +
+        'прежде чем что-то тронуть.');
 
     // Макрос всегда пишется под один файл, поэтому при двух книгах говорим,
     // под какой именно: область «все книги» здесь молча берёт первую.
@@ -6317,7 +6379,15 @@ function renderCleanup() {
 
     // Блок «два запуска» — ответ на вопрос «почему после запуска ничего
     // не изменилось». Режима у макроса больше нет: он решает по ходу дела.
+    // Видимой остаётся сама неожиданность (запусков два), разбор — под (i).
     $('#cleanup-step').hidden = !total;
+    $('#cleanup-step').innerHTML = '<b>Макрос запускается дважды, но собирается один раз.</b>' + infoBtn(
+        '<b>Запуск 1</b> — разведка: макрос ничего не удаляет, а строит лист «REX_очистка» ' +
+        'со списком и открывает его. Имена при этом на месте, и REX после такого прогона ' +
+        'покажет ровно то же самое — так и должно быть.<br><br>' +
+        '<b>Запуск 2</b> — Alt+F8 → <code>REX_CleanNames</code> → «Выполнить» ещё раз: ' +
+        'макрос увидит готовый отчёт и сам спросит, удалять ли. Скачивать модуль заново ' +
+        'и править в нём код не нужно — оба запуска это один и тот же макрос.');
 
     $('#cleanup-macro').textContent = total
         ? buildCleanupMacro(APP.cleanupPick)
@@ -7723,6 +7793,12 @@ const CAP_PILL = {
 };
 
 function renderCapabilities() {
+    // Оговорка про формат нужна один раз и не каждому — таблица ниже говорит
+    // сама за себя, а на первом экране это были две лишние строки текста.
+    $('#cap-why').innerHTML = infoBtn(
+        'Возможности жёстко ограничены форматом, а не инструментом: из xlsb и xls часть ' +
+        'сведений не достать в принципе — их там нет в читаемом виде.<br><br>' +
+        'Те же бейджи вы увидите на соответствующих вкладках, рядом с тем, что удалось разобрать.');
     $('#capability-table').innerHTML = CAPABILITIES.map(r =>
         '<tr><td style="font-weight:600">' + esc(r[0]) + '</td><td>' + CAP_PILL[r[1]] + '</td>' +
         '<td>' + CAP_PILL[r[2]] + '</td><td>' + CAP_PILL[r[3]] + '</td></tr>').join('');
@@ -7894,6 +7970,38 @@ function initEvents() {
         if (APP.graph.nodes.length) renderGraph();
     });
     $('#btn-imp-csv').onclick = () => download('REX_план_очистки.csv', impactCSV(), 'text/csv;charset=utf-8');
+
+    /* Подсказки (i). Обработчик один на документ: кнопки живут внутри
+       разметки, которая перерисовывается целиком, и повешенный на каждую
+       обработчик пропадал бы вместе с ней. */
+    let инфоОткрыта = null;
+    const закрытьИнфо = () => {
+        if (!инфоОткрыта) return;
+        инфоОткрыта.pop.remove();
+        инфоОткрыта.btn.setAttribute('aria-expanded', 'false');
+        инфоОткрыта = null;
+    };
+    document.addEventListener('click', e => {
+        const btn = e.target.closest('.ib');
+        if (!btn) { if (!e.target.closest('.ib-pop')) закрытьИнфо(); return; }
+        e.preventDefault();
+        e.stopPropagation();
+        const тот = инфоОткрыта && инфоОткрыта.btn === btn;
+        закрытьИнфо();
+        if (тот) return;                       // повторный клик закрывает
+        const pop = document.createElement('div');
+        pop.className = 'ib-pop';
+        pop.innerHTML = btn.dataset.info || '';
+        document.body.appendChild(pop);
+        const r = btn.getBoundingClientRect();
+        // Прижимаем к краю окна: у правых колонок всплывашка иначе уезжает за экран
+        pop.style.left = Math.max(12, Math.min(r.left - 12, innerWidth - pop.offsetWidth - 16)) + 'px';
+        pop.style.top  = (r.bottom + window.scrollY + 9) + 'px';
+        btn.setAttribute('aria-expanded', 'true');
+        инфоОткрыта = { btn, pop };
+    });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') закрытьИнфо(); });
+    window.addEventListener('resize', закрытьИнфо);
 
     /* Режим различий. Смысл имеет только когда загружены ровно две книги и
        выбрана одна из них: сравнивать книгу не с чем, если пара не сложилась. */
