@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.4.0 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.4.1 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -494,7 +494,7 @@ tr.row-link { cursor: pointer; }
 .ib {
     display: inline-flex; align-items: center; justify-content: center;
     width: 16px; height: 16px; flex-shrink: 0; margin-left: 6px; padding: 0;
-    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    background: none; border: none; color: var(--text-muted); cursor: help;
     vertical-align: middle; transition: color .15s;
 }
 .ib svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; }
@@ -504,7 +504,7 @@ tr.row-link { cursor: pointer; }
 /* Фон темнее, чем у карточки: всплывашка лежит поверх белого и должна
    от него отделяться. */
 .ib-pop {
-    position: absolute; z-index: 80; max-width: 440px; padding: 11px 13px;
+    position: fixed; z-index: 80; max-width: 440px; padding: 11px 13px;
     background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1; border-radius: 9px;
     box-shadow: 0 8px 24px rgba(15, 23, 42, .13);
     font-size: 12.5px; line-height: 1.6; font-weight: 500; white-space: normal;
@@ -512,10 +512,12 @@ tr.row-link { cursor: pointer; }
 .ib-pop code { background: #e2e8f0; padding: 1px 4px; border-radius: 4px; font-size: 11.5px; }
 .ib-pop b, .ib-pop strong { color: #0f172a; }
 .ib-pop::before {
-    content: ''; position: absolute; top: -6px; left: 14px; width: 10px; height: 10px;
+    content: ''; position: absolute; top: -6px; left: var(--arrow, 14px); width: 10px; height: 10px;
     background: #f1f5f9; border-left: 1px solid #cbd5e1; border-top: 1px solid #cbd5e1;
     transform: rotate(45deg);
 }
+/* У нижнего края окна подсказка встаёт над кнопкой — уголок переезжает вниз */
+.ib-pop.above::before { top: auto; bottom: -6px; transform: rotate(225deg); }
 /* Кружок уровня — риска очистки и влияния листа. Раньше здесь стоял эмодзи
    (🟢 🟡 🔴 🔵): он рисуется шрифтом системы, поэтому на каждой ОС свой размер,
    свой блеск и своя базовая линия, и рядом с подписью в 10 px выглядел крупнее
@@ -1611,7 +1613,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.4.1';
 
 const APP = {
     books: [],          // разобранные книги
@@ -7971,37 +7973,99 @@ function initEvents() {
     });
     $('#btn-imp-csv').onclick = () => download('REX_план_очистки.csv', impactCSV(), 'text/csv;charset=utf-8');
 
-    /* Подсказки (i). Обработчик один на документ: кнопки живут внутри
-       разметки, которая перерисовывается целиком, и повешенный на каждую
-       обработчик пропадал бы вместе с ней. */
-    let инфоОткрыта = null;
-    const закрытьИнфо = () => {
-        if (!инфоОткрыта) return;
-        инфоОткрыта.pop.remove();
-        инфоОткрыта.btn.setAttribute('aria-expanded', 'false');
-        инфоОткрыта = null;
+    /* Подсказки (i). Показываются по наведению: значок не выглядит кнопкой,
+       и «сюда надо кликнуть» из него не читается. В «Качестве» клик вдобавок
+       спорил с раскрытием карточки правила — по наведению спора нет.
+
+       Обработчики делегированы: кнопки живут внутри разметки, которая
+       перерисовывается целиком, и повешенное на каждую пропадало бы с ней.
+       mouseenter/mouseleave не всплывают, поэтому слушаем в фазе перехвата. */
+    let инфо = null;                 // { btn, pop }
+    let таймерЗакрытия = null;
+
+    const скрытьИнфо = () => {
+        clearTimeout(таймерЗакрытия); таймерЗакрытия = null;
+        if (!инфо) return;
+        инфо.pop.remove();
+        инфо.btn.setAttribute('aria-expanded', 'false');
+        инфо = null;
     };
-    document.addEventListener('click', e => {
-        const btn = e.target.closest('.ib');
-        if (!btn) { if (!e.target.closest('.ib-pop')) закрытьИнфо(); return; }
-        e.preventDefault();
-        e.stopPropagation();
-        const тот = инфоОткрыта && инфоОткрыта.btn === btn;
-        закрытьИнфо();
-        if (тот) return;                       // повторный клик закрывает
+    // Уводя мышь с кнопки вниз, в саму подсказку, человек пересекает зазор
+    // между ними: закрываем с задержкой, иначе текст не дочитать.
+    const отложитьЗакрытие = () => {
+        clearTimeout(таймерЗакрытия);
+        таймерЗакрытия = setTimeout(скрытьИнфо, 180);
+    };
+    const держать = () => { clearTimeout(таймерЗакрытия); таймерЗакрытия = null; };
+
+    const показатьИнфо = btn => {
+        if (инфо && инфо.btn === btn) { держать(); return; }
+        скрытьИнфо();
+        if (!btn.dataset.info) return;
         const pop = document.createElement('div');
         pop.className = 'ib-pop';
-        pop.innerHTML = btn.dataset.info || '';
+        pop.innerHTML = btn.dataset.info;
+        pop.addEventListener('mouseenter', держать);
+        pop.addEventListener('mouseleave', отложитьЗакрытие);
         document.body.appendChild(pop);
+
+        // Координаты считаем от окна (position: fixed): при прокрутке
+        // страницы подсказка иначе уезжает на величину scrollY.
         const r = btn.getBoundingClientRect();
-        // Прижимаем к краю окна: у правых колонок всплывашка иначе уезжает за экран
-        pop.style.left = Math.max(12, Math.min(r.left - 12, innerWidth - pop.offsetWidth - 16)) + 'px';
-        pop.style.top  = (r.bottom + window.scrollY + 9) + 'px';
+        const ш = pop.offsetWidth, в = pop.offsetHeight;
+        const левый = Math.max(12, Math.min(r.left - 12, innerWidth - ш - 16));
+        pop.style.left = левый + 'px';
+
+        // Обычно подсказка висит под кнопкой. Если под ней не помещается —
+        // встаёт над; если не помещается и там (низкое окно), выбираем
+        // сторону просторнее и подрезаем высоту, чтобы не уехать за экран.
+        const снизуМесто = innerHeight - r.bottom - 12;
+        const сверхуМесто = r.top - 12;
+        const снизу = в + 9 <= снизуМесто || снизуМесто >= сверхуМесто;
+        const место = Math.max(120, (снизу ? снизуМесто : сверхуМесто) - 9);
+        if (в > место) { pop.style.maxHeight = место + 'px'; pop.style.overflowY = 'auto'; }
+        const выс = Math.min(в, место);
+        pop.style.top = (снизу ? r.bottom + 9 : Math.max(12, r.top - выс - 9)) + 'px';
+        if (!снизу) pop.classList.add('above');
+        // Уголок смотрит на кнопку, а не в середину прижатой к краю подсказки
+        pop.style.setProperty('--arrow',
+            Math.max(10, Math.min(r.left + r.width / 2 - левый - 5, ш - 20)) + 'px');
+
         btn.setAttribute('aria-expanded', 'true');
-        инфоОткрыта = { btn, pop };
-    });
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') закрытьИнфо(); });
-    window.addEventListener('resize', закрытьИнфо);
+        инфо = { btn, pop };
+    };
+
+    document.addEventListener('mouseenter', e => {
+        const btn = e.target.closest && e.target.closest('.ib');
+        if (btn) показатьИнфо(btn);
+    }, true);
+    document.addEventListener('mouseleave', e => {
+        const btn = e.target.closest && e.target.closest('.ib');
+        // Переход с <svg> на саму кнопку — не уход: значок лежит внутри неё
+        if (btn && !(e.relatedTarget && e.relatedTarget.closest
+                     && e.relatedTarget.closest('.ib') === btn)) отложитьЗакрытие();
+    }, true);
+    // С клавиатуры и на тачскрине наведения нет: там работают фокус и тап.
+    document.addEventListener('focusin',  e => { if (e.target.closest('.ib')) показатьИнфо(e.target.closest('.ib')); });
+    document.addEventListener('focusout', e => { if (e.target.closest('.ib')) отложитьЗакрытие(); });
+    // В фазе перехвата: общий обработчик кликов по документу навешан раньше
+    // и на тот же document, поэтому из фазы всплытия карточку правила уже
+    // не остановить — stopPropagation опоздал бы на один обработчик.
+    document.addEventListener('click', e => {
+        const btn = e.target.closest('.ib');
+        if (!btn) { if (!e.target.closest('.ib-pop')) скрытьИнфо(); return; }
+        e.preventDefault();
+        e.stopPropagation();
+        if (инфо && инфо.btn === btn) скрытьИнфо(); else показатьИнфо(btn);
+    }, true);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') скрытьИнфо(); });
+    window.addEventListener('resize', скрытьИнфо);
+    // Прокрутка страницы уводит кнопку из-под подсказки — закрываем. Но не
+    // тогда, когда прокручивают саму подсказку: в низком окне она с полосой.
+    window.addEventListener('scroll', e => {
+        if (инфо && e.target && e.target.closest && e.target.closest('.ib-pop')) return;
+        скрытьИнфо();
+    }, true);
 
     /* Режим различий. Смысл имеет только когда загружены ровно две книги и
        выбрана одна из них: сравнивать книгу не с чем, если пара не сложилась. */
