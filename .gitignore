@@ -1,0 +1,17 @@
+# Git не понимает комментарии в конце строки — только отдельными строками,
+# иначе комментарий становится частью образца и правило молча не работает.
+
+# Зависимости проверок
+tests/node_modules/
+
+# Библиотеки: раскладываются из node_modules командой `node tests/vendor.js`
+tests/vendor/
+
+# Локальная сборка приложения: `python3 tests/build.py`
+tests/build/
+
+# Книги для проверок: `python3 tests/fixtures/make_books.py`
+tests/fixtures/*.xlsx
+tests/fixtures/*.xlsm
+
+__pycache__/

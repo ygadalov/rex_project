@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.4.4 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.4.5 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1631,7 +1631,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.4.4';
+const APP_VERSION = '2.4.5';
 
 const APP = {
     books: [],          // разобранные книги
@@ -7180,15 +7180,20 @@ function centerOnNode(node, opts) {
        промахивается на сотни пикселей. Раньше это не всплывало: масштаб
        менял только выбор из списка, а он звал centerOnNode вторым заходом,
        когда зум уже стоял на месте и анимировался чистый центр.
-       Экранная позиция узла = pos * zoom + pan, отсюда и формула. */
-    const anim = {};
-    if (needZoom) {
-        anim.zoom = wantZoom;
-        anim.pan = { x: cy.width() / 2 - pos.x * wantZoom,
-                     y: cy.height() / 2 - pos.y * wantZoom };
-    } else {
-        anim.center = { eles: node };
-    }
+       Экранная позиция узла = pos * zoom + pan, отсюда и формула.
+
+       Пан считаем и тогда, когда масштаб не меняется. Отдать этот случай
+       cytoscape нельзя: его { center } ставит в середину ОХВАТЫВАЮЩУЮ
+       РАМКУ узла вместе с подписью под ним, и сам узел оказывается выше
+       центра на половину подписи — замерено 21 px. Выходило, что один и
+       тот же клик приводит объект в разные места в зависимости от того,
+       понадобилось ли по дороге приблизить. */
+    const масштаб = needZoom ? wantZoom : cy.zoom();
+    const anim = {
+        pan: { x: cy.width() / 2 - pos.x * масштаб,
+               y: cy.height() / 2 - pos.y * масштаб },
+    };
+    if (needZoom) anim.zoom = wantZoom;
     cy.animate(anim, { duration: 380, easing: 'ease-out-cubic' });
 }
 

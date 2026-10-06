@@ -1,0 +1,17 @@
+{
+  "name": "rex-tests",
+  "private": true,
+  "description": "Регрессия REX: синтетические книги + прогон в Chromium",
+  "scripts": {
+    "setup": "node vendor.js && python3 build.py && python3 fixtures/make_books.py",
+    "test": "python3 build.py && node run.js"
+  },
+  "devDependencies": {
+    "cytoscape": "3.30.4",
+    "cytoscape-dagre": "2.5.0",
+    "dagre": "0.8.5",
+    "fflate": "0.8.2",
+    "playwright-core": "^1.49.0",
+    "xlsx": "0.18.5"
+  }
+}

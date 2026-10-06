@@ -1,0 +1,36 @@
+name: Проверки
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  регрессия:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Зависимости
+        working-directory: tests
+        run: npm install --no-audit --no-fund
+
+      - name: Chromium для Playwright
+        working-directory: tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Сборка книг и приложения
+        working-directory: tests
+        run: |
+          node vendor.js
+          python3 fixtures/make_books.py
+          python3 build.py
+
+      - name: Прогон
+        working-directory: tests
+        run: node run.js
