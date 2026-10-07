@@ -100,6 +100,66 @@ module.exports = async function () {
     }
     await pg.setViewportSize({ width: 1450, height: 950 });
 
+    t.раздел('У значков есть точки: концы штриха круглые');
+    // В наборе иконок точка нарисована отрезком НУЛЕВОЙ длины (M12 16h.01).
+    // При плоских концах (butt по умолчанию) рисовать у такого отрезка нечего,
+    // и точка пропадает — у восклицательного знака и у «i» разом.
+    await страница(pg, 'quality');
+    const значки = await pg.evaluate(() => {
+        const из = [];
+        document.querySelectorAll('svg[viewBox="0 0 24 24"]').forEach(svg => {
+            const точка = [...svg.querySelectorAll('path')]
+                .some(p => /[hv]\.0\d/.test(p.getAttribute('d') || ''));
+            const ст = getComputedStyle(svg);
+            из.push({ точка, cap: ст.strokeLinecap, где: (svg.closest('[class]') || {}).className });
+        });
+        return { всего: из.length,
+                 сТочкой: из.filter(x => x.точка).length,
+                 плоские: из.filter(x => x.точка && x.cap !== 'round').map(x => x.где) };
+    });
+    t.ok(значки.сТочкой >= 3, 'значки с точкой на странице есть: ' + значки.сТочкой);
+    t.ok(!значки.плоские.length, 'ни у одного не плоские концы'
+         + (значки.плоские.length ? ' — ' + значки.плоские.slice(0, 3).join(', ') : ''));
+
+    // Точка должна не только «не быть запрещена стилем», но и реально
+    // рисоваться. Меряем краской: рисуем значок крупно на белом и считаем
+    // полосы чернил по его середине. У исправного их три — верх фигуры,
+    // палочка и отдельно точка; без круглых концов точки нет, полос две.
+    // Геометрию мерить бесполезно: у отрезка нулевой длины она нулевая при
+    // любых концах, ширину мазка даёт только растр.
+    const полосы = await pg.evaluate(() => {
+        const svg = document.querySelector('.issue-icon svg');
+        // xmlns сериализатор уже проставил — второй такой же делает разметку
+        // невалидной, и картинка молча не грузится.
+        const кусок = new XMLSerializer().serializeToString(svg.cloneNode(true))
+            .replace(/^<svg/, '<svg width="120" height="120"' +
+                     ' stroke="#000" stroke-width="2" fill="none"' +
+                     ' stroke-linecap="' + getComputedStyle(svg).strokeLinecap + '"');
+        return new Promise(готово => {
+            const img = new Image();
+            img.onload = () => {
+                const c = document.createElement('canvas');
+                c.width = c.height = 120;
+                const ctx = c.getContext('2d');
+                ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 120, 120);
+                ctx.drawImage(img, 0, 0);
+                const d = ctx.getImageData(52, 0, 16, 120).data;   // центральная полоса
+                let групп = 0, внутри = false;
+                for (let y = 0; y < 120; y++) {
+                    let есть = false;
+                    for (let x = 0; x < 16; x++) if (d[(y * 16 + x) * 4 + 3] > 40 && d[(y * 16 + x) * 4] < 170) есть = true;
+                    if (есть && !внутри) групп++;
+                    внутри = есть;
+                }
+                готово(групп);
+            };
+            img.onerror = () => готово(-1);
+            img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(кусок);
+        });
+    });
+    t.ok(полосы >= 4, 'в значке видны и палочка, и точка отдельно от неё: полос чернил ' + полосы +
+       ' (без точки их три: верх фигуры, палочка, низ фигуры)');
+
     t.раздел('Строки индекса здоровья не переносятся');
     await страница(pg, 'overview');
     const инд = await pg.evaluate(() => [...document.querySelectorAll('.health-bar-row')].map(r => {
