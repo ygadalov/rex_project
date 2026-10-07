@@ -104,6 +104,36 @@ h2.pair::before { content: ''; position: absolute; left: 0; top: .22em; bottom: 
 .item .lv { font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
             color: var(--c); background: var(--cbg); padding: 3px 9px; border-radius: 999px; }
 
+/* ── разбор по колонкам ── */
+.col-demo { margin-top: 18px; background: #fff; border: 1px solid var(--border-light);
+            border-radius: 14px; box-shadow: var(--shadow); padding: 18px 20px 16px; }
+.col-demo-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.col-demo-head b { font-size: 14.5px; font-weight: 700; }
+.col-letter { font-family: 'JetBrains Mono', monospace; font-size: 15px; font-weight: 700;
+              color: #d97706; background: #fef3c7; width: 28px; height: 28px; border-radius: 7px;
+              display: inline-flex; align-items: center; justify-content: center; }
+.col-pat { font-size: 12.5px; color: var(--muted); background: var(--border-light);
+           padding: 3px 9px; border-radius: 6px; }
+.col-sp { flex: 1; }
+.col-chip { font-size: 11.5px; font-weight: 700; color: var(--c);
+            border: 1px solid var(--c); border-radius: 999px; padding: 2px 10px; }
+/* Тридцать ячеек колонки в ряд: три подменённые видно сразу, и видно, что
+   остальные двадцать семь одинаковые — в этом вся суть находки. */
+.col-cells { display: flex; gap: 3px; margin: 14px 0 12px; flex-wrap: wrap; }
+.col-cells .cell { flex: 1 1 22px; min-width: 22px; height: 26px; border-radius: 5px;
+                   display: flex; align-items: center; justify-content: center;
+                   font-family: 'JetBrains Mono', monospace; font-size: 10px;
+                   background: #f1f5f9; color: #94a3b8; border: 1px solid transparent; }
+.col-cells .cell.torn { background: #fef3c7; border-color: #fcd34d; color: #92400e;
+                        font-size: 8.5px; font-weight: 700; flex: 1 1 42px; min-width: 42px; }
+.col-note { font-size: 13px; color: var(--muted); line-height: 1.6; }
+.col-more { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 12px; margin-top: 14px; }
+.col-more div { background: #fff; border: 1px solid var(--border-light); border-radius: 11px;
+                padding: 14px 16px; box-shadow: var(--shadow); }
+.col-more b { display: block; font-size: 13.5px; font-weight: 700; margin-bottom: 3px; }
+.col-more span { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+
 /* ── полоса «ещё» ── */
 .more { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px;
         margin-top: 24px; }
@@ -163,7 +193,7 @@ h2.pair::before { content: ''; position: absolute; left: 0; top: .22em; bottom: 
     <h1>В книге двадцать листов, шестнадцать запросов и число,
         которое <em>никто не может объяснить</em></h1>
     <p>Автор уволился, комментариев нет, а отчёт сдавать завтра.</p>
-    <p class="answer">REX распаковывает книгу и читает её насквозь — от сырого XML
+    <p class="answer">REX распаковывает книгу и читает её насквозь&nbsp;— от сырого XML
        до M-кода запросов.</p>
 
     <h2 class="pair">Показывает, откуда что берётся</h2>
@@ -181,10 +211,38 @@ h2.pair::before { content: ''; position: absolute; left: 0; top: .22em; bottom: 
 </div></section>
 
 <section class="sec"><div class="wrap">
-    <h2 class="pair">И говорит, что с книгой не так</h2>
+    <h2 class="pair">Разбирает, как устроен расчёт</h2>
+    <p class="note">Колонку в Excel обычно протягивают: одна формула на весь диапазон.
+       REX сверяет её по всей колонке и показывает, где эту ровность нарушили.</p>
+
+    <div class="col-demo">
+        <div class="col-demo-head">
+            <span class="col-letter">D</span>
+            <b>Сумма</b>
+            <span class="col-pat mono">=B{строка}*C{строка}</span>
+            <span class="col-sp"></span>
+            <span class="col-chip" style="--c:#16a34a">ровных 27</span>
+            <span class="col-chip" style="--c:#d97706">разрывов 3</span>
+        </div>
+        <div class="col-cells"><span class="cell" title="D2 — формула">=</span><span class="cell" title="D3 — формула">=</span><span class="cell" title="D4 — формула">=</span><span class="cell" title="D5 — формула">=</span><span class="cell" title="D6 — формула">=</span><span class="cell" title="D7 — формула">=</span><span class="cell" title="D8 — формула">=</span><span class="cell torn" title="D9 — вбито руками: 99 999">99 999</span><span class="cell" title="D10 — формула">=</span><span class="cell" title="D11 — формула">=</span><span class="cell" title="D12 — формула">=</span><span class="cell" title="D13 — формула">=</span><span class="cell" title="D14 — формула">=</span><span class="cell" title="D15 — формула">=</span><span class="cell" title="D16 — формула">=</span><span class="cell torn" title="D17 — вбито руками: 99 999">99 999</span><span class="cell" title="D18 — формула">=</span><span class="cell" title="D19 — формула">=</span><span class="cell" title="D20 — формула">=</span><span class="cell" title="D21 — формула">=</span><span class="cell" title="D22 — формула">=</span><span class="cell" title="D23 — формула">=</span><span class="cell torn" title="D24 — вбито руками: 99 999">99 999</span><span class="cell" title="D25 — формула">=</span><span class="cell" title="D26 — формула">=</span><span class="cell" title="D27 — формула">=</span><span class="cell" title="D28 — формула">=</span><span class="cell" title="D29 — формула">=</span><span class="cell" title="D30 — формула">=</span><span class="cell" title="D31 — формула">=</span></div>
+        <p class="col-note">Excel на это не ругается: ошибки нет, книга считается.
+           Просто три строки из тридцати считаются не так, как остальные, —
+           и глазами такое не находится.</p>
+    </div>
+
+    <div class="col-more">
+        <div><b>Матрица ссылок между листами</b><span>кто на кого ссылается и сколько раз —
+            видно, какой лист держит на себе расчёт</span></div>
+        <div><b>Внешние книги</b><span>пути к файлам-источникам и то, где они используются;
+            локальный диск отмечается отдельно</span></div>
+        <div><b>Самые длинные формулы</b><span>кандидаты на распил, с подсветкой ссылок
+            на листы, таблицы и имена</span></div>
+    </div>
+
+    <h2 class="pair" style="margin-top:46px">И говорит, что с книгой не так</h2>
     <p class="note">Пятнадцать правил. Каждое объясняет, чем оно грозит и что с этим делать —
        в терминах самого Excel, а не в терминах разбора.</p>
-    <div class="list"><div class="item" style="--c:#ef4444;--cbg:#fee2e2"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16h.01"/></svg><span><b>Ссылки #REF! в формулах</b><span>лист удалили, формулы остались — считается мусор</span></span><span class="lv">крит</span></div><div class="item" style="--c:#ef4444;--cbg:#fee2e2"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16h.01"/></svg><span><b>Пересчёт переключён на «вручную»</b><span>числа на экране могут быть вчерашними</span></span><span class="lv">крит</span></div><div class="item" style="--c:#f59e0b;--cbg:#fef3c7"><svg viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg><span><b>Значения, вбитые посреди формульной колонки</b><span>колонку протянули, а три ячейки заменили руками</span></span><span class="lv">важно</span></div><div class="item" style="--c:#f59e0b;--cbg:#fef3c7"><svg viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg><span><b>ДВССЫЛ и СМЕЩ в формулах</b><span>адрес собирается во время расчёта — из файла его не видно</span></span><span class="lv">важно</span></div><div class="item" style="--c:#2b6cb8;--cbg:#e3edf9"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/></svg><span><b>Скрытые имена от надстроек</b><span>Диспетчер имён их не показывает ни при каком фильтре</span></span><span class="lv">мелочь</span></div></div>
+    <div class="list"><div class="item" style="--c:#ef4444;--cbg:#fee2e2"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16h.01"/></svg><span><b>Ссылки #REF! в формулах</b><span>лист удалили, формулы остались — считается мусор</span></span><span class="lv">крит</span></div><div class="item" style="--c:#ef4444;--cbg:#fee2e2"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16h.01"/></svg><span><b>Пересчёт переключён на «вручную»</b><span>числа на экране могут быть вчерашними</span></span><span class="lv">крит</span></div><div class="item" style="--c:#f59e0b;--cbg:#fef3c7"><svg viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg><span><b>Листы, на которые никто не ссылается</b><span>лист заполнен, но в расчёте не участвует — кандидат в архив</span></span><span class="lv">важно</span></div><div class="item" style="--c:#f59e0b;--cbg:#fef3c7"><svg viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg><span><b>ДВССЫЛ и СМЕЩ в формулах</b><span>адрес собирается во время расчёта — из файла его не видно</span></span><span class="lv">важно</span></div><div class="item" style="--c:#2b6cb8;--cbg:#e3edf9"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/></svg><span><b>Скрытые имена от надстроек</b><span>Диспетчер имён их не показывает ни при каком фильтре</span></span><span class="lv">мелочь</span></div></div>
     <div class="more">
         <div><b>Очистка книги</b><span>Мусорные имена по происхождению и макрос под вашу книгу.
             Запускается дважды и ничего не удаляет молча.</span></div>
