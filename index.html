@@ -119,7 +119,7 @@ h2.pair::before { content: ''; position: absolute; left: 0; top: .22em; bottom: 
             border: 1px solid var(--c); border-radius: 999px; padding: 2px 10px; }
 /* Тридцать ячеек колонки в ряд: три подменённые видно сразу, и видно, что
    остальные двадцать семь одинаковые — в этом вся суть находки. */
-.col-cells { display: flex; gap: 3px; margin: 14px 0 12px; flex-wrap: wrap; }
+.col-cells { display: flex; gap: 3px; margin: 0 0 11px; flex-wrap: wrap; }
 .col-cells .cell { flex: 1 1 22px; min-width: 22px; height: 26px; border-radius: 5px;
                    display: flex; align-items: center; justify-content: center;
                    font-family: 'JetBrains Mono', monospace; font-size: 10px;
@@ -127,6 +127,17 @@ h2.pair::before { content: ''; position: absolute; left: 0; top: .22em; bottom: 
 .col-cells .cell.torn { background: #fef3c7; border-color: #fcd34d; color: #92400e;
                         font-size: 8.5px; font-weight: 700; flex: 1 1 42px; min-width: 42px; }
 .col-note { font-size: 13px; color: var(--muted); line-height: 1.6; }
+.col-note b { color: var(--ink); }
+/* Куда тянется колонка — главное в карточке: это и есть ответ на вопрос
+   «откуда взялось число». Чипы те же, что в самом приложении. */
+.refs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.refs-label { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+              color: #94a3b8; }
+.ref-chip { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;
+            font-weight: 600; color: #334155; background: #fff;
+            border: 1px solid var(--border); border-radius: 999px; padding: 5px 12px 5px 9px; }
+/* Разрывы — довесок, а не главное: отделяем чертой и даём мельче. */
+.col-bonus { margin-top: 16px; padding-top: 15px; border-top: 1px solid var(--border-light); }
 .col-more { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
             gap: 12px; margin-top: 14px; }
 .col-more div { background: #fff; border: 1px solid var(--border-light); border-radius: 11px;
@@ -169,6 +180,9 @@ h2.pair::before { content: ''; position: absolute; left: 0; top: .22em; bottom: 
     h2.pair { padding-left: 12px; }
     h2.pair::before { width: 3px; }
     .item { grid-template-columns: 20px 1fr; }
+    /* Подпись «ссылается на» цеплялась к первому чипу, остальные уезжали вниз
+       рваной лесенкой. На узком экране отдаём ей отдельную строку. */
+    .refs-label { width: 100%; }
     .item .lv { display: none; }
 }
 </style>
@@ -212,22 +226,28 @@ h2.pair::before { content: ''; position: absolute; left: 0; top: .22em; bottom: 
 
 <section class="sec"><div class="wrap">
     <h2 class="pair">Разбирает, как устроен расчёт</h2>
-    <p class="note">Колонку в Excel обычно протягивают: одна формула на весь диапазон.
-       REX сверяет её по всей колонке и показывает, где эту ровность нарушили.</p>
+    <p class="note">То самое необъяснимое число стоит в какой-то колонке. REX показывает,
+       по какой формуле она считается и откуда тянет данные — а дальше по цепочке, пока
+       не упрётся в источник.</p>
 
     <div class="col-demo">
         <div class="col-demo-head">
             <span class="col-letter">D</span>
             <b>Сумма</b>
-            <span class="col-pat mono">=B{строка}*C{строка}</span>
+            <span class="col-pat mono">=B{строка} * C{строка} * Курс_USD</span>
             <span class="col-sp"></span>
-            <span class="col-chip" style="--c:#16a34a">ровных 27</span>
-            <span class="col-chip" style="--c:#d97706">разрывов 3</span>
+            <span class="col-chip" style="--c:#64748b">27 из 30 ячеек</span>
         </div>
-        <div class="col-cells"><span class="cell" title="D2 — формула">=</span><span class="cell" title="D3 — формула">=</span><span class="cell" title="D4 — формула">=</span><span class="cell" title="D5 — формула">=</span><span class="cell" title="D6 — формула">=</span><span class="cell" title="D7 — формула">=</span><span class="cell" title="D8 — формула">=</span><span class="cell torn" title="D9 — вбито руками: 99 999">99 999</span><span class="cell" title="D10 — формула">=</span><span class="cell" title="D11 — формула">=</span><span class="cell" title="D12 — формула">=</span><span class="cell" title="D13 — формула">=</span><span class="cell" title="D14 — формула">=</span><span class="cell" title="D15 — формула">=</span><span class="cell" title="D16 — формула">=</span><span class="cell torn" title="D17 — вбито руками: 99 999">99 999</span><span class="cell" title="D18 — формула">=</span><span class="cell" title="D19 — формула">=</span><span class="cell" title="D20 — формула">=</span><span class="cell" title="D21 — формула">=</span><span class="cell" title="D22 — формула">=</span><span class="cell" title="D23 — формула">=</span><span class="cell torn" title="D24 — вбито руками: 99 999">99 999</span><span class="cell" title="D25 — формула">=</span><span class="cell" title="D26 — формула">=</span><span class="cell" title="D27 — формула">=</span><span class="cell" title="D28 — формула">=</span><span class="cell" title="D29 — формула">=</span><span class="cell" title="D30 — формула">=</span><span class="cell" title="D31 — формула">=</span></div>
-        <p class="col-note">Excel на это не ругается: ошибки нет, книга считается.
-           Просто три строки из тридцати считаются не так, как остальные, —
-           и глазами такое не находится.</p>
+        <div class="refs">
+            <span class="refs-label">Ссылается на</span>
+            <span class="ref-chip"><svg viewBox="-2 -2 28 28" width="15" height="15" fill="#2563eb" aria-hidden="true"><path d="M2.5 3h19v18h-19z"/><path d="M2.5 9h19M2.5 15h19M8.5 3v18" stroke="#fff" stroke-width="1.7" fill="none"/></svg>лист «Ставки»</span><span class="ref-chip"><svg viewBox="-2 -2 28 28" width="15" height="15" fill="#059669" aria-hidden="true"><path d="M2.5 3h19v18h-19z"/><path d="M2.5 9h19M9 9v12M15.5 9v12" stroke="#fff" stroke-width="1.7" fill="none"/></svg>таблица «Договоры»</span><span class="ref-chip"><svg viewBox="-2 -2 28 28" width="15" height="15" fill="#eab308" aria-hidden="true"><path d="M2 5h13l6.5 7-6.5 7H2z"/><circle cx="6.5" cy="12" r="1.9" fill="#fff" fill-opacity=".55"/></svg>имя «Курс_USD»</span><span class="ref-chip"><svg viewBox="-2 -2 28 28" width="15" height="15" fill="#64748b" aria-hidden="true"><path d="M5 2h9l5 5v15H5z"/><path d="M14 2v5h5" fill="#fff" fill-opacity=".45"/><path d="M8.5 15.5h6M12 12.5l3.2 3-3.2 3" stroke="#fff" stroke-width="1.8" fill="none"/></svg>книга «Справочник цен.xlsx»</span>
+        </div>
+        <div class="col-bonus">
+            <div class="col-cells"><span class="cell" title="D2 — формула">=</span><span class="cell" title="D3 — формула">=</span><span class="cell" title="D4 — формула">=</span><span class="cell" title="D5 — формула">=</span><span class="cell" title="D6 — формула">=</span><span class="cell" title="D7 — формула">=</span><span class="cell" title="D8 — формула">=</span><span class="cell torn" title="D9 — вбито руками: 99 999">99 999</span><span class="cell" title="D10 — формула">=</span><span class="cell" title="D11 — формула">=</span><span class="cell" title="D12 — формула">=</span><span class="cell" title="D13 — формула">=</span><span class="cell" title="D14 — формула">=</span><span class="cell" title="D15 — формула">=</span><span class="cell" title="D16 — формула">=</span><span class="cell torn" title="D17 — вбито руками: 99 999">99 999</span><span class="cell" title="D18 — формула">=</span><span class="cell" title="D19 — формула">=</span><span class="cell" title="D20 — формула">=</span><span class="cell" title="D21 — формула">=</span><span class="cell" title="D22 — формула">=</span><span class="cell" title="D23 — формула">=</span><span class="cell torn" title="D24 — вбито руками: 99 999">99 999</span><span class="cell" title="D25 — формула">=</span><span class="cell" title="D26 — формула">=</span><span class="cell" title="D27 — формула">=</span><span class="cell" title="D28 — формула">=</span><span class="cell" title="D29 — формула">=</span><span class="cell" title="D30 — формула">=</span><span class="cell" title="D31 — формула">=</span></div>
+            <p class="col-note"><b>А заодно видно, где формулу подменили руками:</b>
+               три ячейки из тридцати считаются не так, как остальные. Excel на это не
+               ругается — ошибки нет, книга считается, — и глазами такое не находится.</p>
+        </div>
     </div>
 
     <div class="col-more">
