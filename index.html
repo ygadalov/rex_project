@@ -153,6 +153,50 @@ h2.pair::before { content: ''; position: absolute; left: 0; top: .22em; bottom: 
 .more b { display: block; font-size: 14px; font-weight: 700; margin-bottom: 4px; }
 .more span { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
 
+/* ── конвертер ──────────────────────────────────────────────────────────
+   Заголовок с другой меткой: перечисление «показывает — разбирает — и
+   говорит» закрыто, а это уже не про разбор, а отдельный инструмент. */
+h2.solo { position: relative; padding-left: 16px; }
+h2.solo::before { content: ''; position: absolute; left: 0; top: .22em; bottom: .22em;
+                  width: 4px; border-radius: 2px; background: var(--muted); }
+.cv-demo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px;
+           margin-top: 18px; align-items: start; }
+.cv-tree { background: #fff; border: 1px solid var(--border-light); border-radius: 14px;
+           box-shadow: var(--shadow); padding: 16px 18px; font-size: 13px; }
+.tr-row { display: flex; align-items: center; gap: 8px; padding: 4px 0;
+          padding-left: calc(var(--lv) * 18px); }
+.tr-ic { color: #94a3b8; display: flex; flex-shrink: 0; }
+.tr-ic svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; fill: none;
+             stroke-linecap: round; stroke-linejoin: round; }
+.tr-dir { color: var(--primary); }
+.tr-row:not(.tr-file) .tr-name { font-weight: 700; color: var(--ink); }
+.tr-name { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr-file .tr-name { font-size: 12.5px; }
+.tr-old { font-family: 'JetBrains Mono', monospace; font-weight: 500; color: #b45309; }
+.tr-to { color: #cbd5e1; flex-shrink: 0; }
+.tr-new { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #15803d; }
+/* В узком месте второе имя не нужно: достаточно показать смену расширения. */
+.cv-tree .tr-file .tr-name:last-of-type { flex-shrink: 0; }
+
+.cv-side { display: grid; gap: 10px; }
+.cv-point { background: #fff; border: 1px solid var(--border-light); border-radius: 11px;
+            padding: 14px 16px; box-shadow: var(--shadow); }
+.cv-point b { display: block; font-size: 13.5px; font-weight: 700; margin-bottom: 3px; }
+.cv-point span { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+
+.cv-limits { margin-top: 14px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 11px;
+             padding: 14px 17px; font-size: 13px; line-height: 1.65; color: #713f12; }
+.cv-limits b { color: #78350f; }
+
+@media (max-width: 760px) {
+    .cv-demo { grid-template-columns: 1fr; }
+    /* На телефоне две колонки имён не влезают. Прячем только основу второго
+       имени: остаются «Реестр договоров.xls → .xlsb», то есть ровно то,
+       ради чего строка и нужна. Прятать второе имя целиком нельзя — вместе
+       с ним уходило расширение, и стрелка повисала в пустоте. */
+    .cv-tree .tr-base { display: none; }
+}
+
 /* ── финал ── */
 .end { margin: 50px 0 0; background: var(--ink-soft); border-radius: 16px; padding: 38px 34px;
        color: #e8f0fa; text-align: center; }
@@ -270,8 +314,37 @@ h2.pair::before { content: ''; position: absolute; left: 0; top: .22em; bottom: 
             контрольных сумм частей архива.</span></div>
         <div><b>Отчёт</b><span>Паспорт книги в Markdown, граф в JSON, реестр находок в CSV —
             приложить к письму.</span></div>
-        <div><b>Конвертер форматов</b><span>Пакетно переводит папку с таблицами из XLS в XLSX,
-            XLSB или ODS — вместе со всеми вложенными папками.</span></div>
+    </div>
+</div></section>
+
+
+<section class="sec"><div class="wrap">
+    <h2 class="solo">Отдельно: конвертер форматов</h2>
+    <p class="note">Power Query смотрит в папку с выгрузками, а там сотня файлов <code>.xls</code> из
+       1С или банк-клиента. Старый формат читается медленно, иногда требует отдельного драйвера,
+       а иногда просто роняет обновление. Переложить всё вручную — день работы.</p>
+
+    <div class="cv-demo">
+        <div class="cv-tree"><div class="tr-row" style="--lv:0"><span class="tr-ic tr-dir"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span class="tr-name">Источники PQ</span></div><div class="tr-row" style="--lv:1"><span class="tr-ic tr-dir"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span class="tr-name">2025</span></div><div class="tr-row" style="--lv:2"><span class="tr-ic tr-dir"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span class="tr-name">Март</span></div><div class="tr-row tr-file" style="--lv:3"><span class="tr-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span><span class="tr-name">Реестр договоров<b class="tr-old">.xls</b></span><span class="tr-to">→</span><span class="tr-name"><span class="tr-base">Реестр договоров</span><b class="tr-new">.xlsb</b></span></div><div class="tr-row tr-file" style="--lv:3"><span class="tr-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span><span class="tr-name">Свод по филиалам<b class="tr-old">.xls</b></span><span class="tr-to">→</span><span class="tr-name"><span class="tr-base">Свод по филиалам</span><b class="tr-new">.xlsb</b></span></div><div class="tr-row" style="--lv:2"><span class="tr-ic tr-dir"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span class="tr-name">Апрель</span></div><div class="tr-row tr-file" style="--lv:3"><span class="tr-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span><span class="tr-name">Выгрузка 1С<b class="tr-old">.xls</b></span><span class="tr-to">→</span><span class="tr-name"><span class="tr-base">Выгрузка 1С</span><b class="tr-new">.xlsb</b></span></div><div class="tr-row tr-file" style="--lv:3"><span class="tr-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span><span class="tr-name">Акты сверки<b class="tr-old">.xls</b></span><span class="tr-to">→</span><span class="tr-name"><span class="tr-base">Акты сверки</span><b class="tr-new">.xlsb</b></span></div><div class="tr-row" style="--lv:1"><span class="tr-ic tr-dir"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span class="tr-name">2024</span></div><div class="tr-row tr-file" style="--lv:2"><span class="tr-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></span><span class="tr-name">Архив за год<b class="tr-old">.xls</b></span><span class="tr-to">→</span><span class="tr-name"><span class="tr-base">Архив за год</span><b class="tr-new">.xlsb</b></span></div></div>
+        <div class="cv-side">
+            <div class="cv-point"><b>Папка целиком, вместе с вложенными</b>
+                <span>REX проходит дерево вглубь и собирает все таблицы: год, месяц, файл —
+                      структуру трогать не нужно.</span></div>
+            <div class="cv-point"><b>Файлы ложатся рядом с исходными</b>
+                <span>Пути не меняются, значит запросы Power Query продолжают смотреть
+                      туда же. Исходники можно оставить или удалить — по галке.</span></div>
+            <div class="cv-point"><b>Список виден до запуска</b>
+                <span>Сначала показывает, что именно собирается переделать, и только потом
+                      берётся за работу.</span></div>
+        </div>
+    </div>
+
+    <div class="cv-limits">
+        <b>Честно про ограничения.</b> Это настоящая конвертация, а не смена расширения: REX читает
+        книгу и записывает заново. Переносятся значения, листы и объединения; формулы выживают
+        только при переводе в XLSX. Оформление, диаграммы, картинки, сводные и макросы теряются —
+        поэтому конвертер хорош для <b>папок-источников</b>, а не для готовых отчётов.
+        Нужен Chrome или Edge: доступ к папкам есть только в них.
     </div>
 </div></section>
 

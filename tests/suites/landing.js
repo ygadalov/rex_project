@@ -74,6 +74,42 @@ module.exports = async function () {
              + (r.лишнее > 0 ? ' — лишних ' + r.лишнее + 'px: ' + r.вылезли.join(', ') : ''));
     }
 
+    t.раздел('Раздел про конвертер на месте и не врёт про возможности');
+    const кв = await pg.evaluate(() => {
+        const з = [...document.querySelectorAll('h2')].find(h => /конвертер/i.test(h.textContent));
+        if (!з) return null;
+        const раздел = з.closest('section');
+        const файлы = [...раздел.querySelectorAll('.tr-file')];
+        return {
+            заголовок: з.textContent.trim(),
+            метка: getComputedStyle(з, '::before').backgroundColor,
+            строкФайлов: файлы.length,
+            папок: раздел.querySelectorAll('.tr-row:not(.tr-file)').length,
+            сКонвертацией: файлы.filter(r => /\.xls\b/.test(r.innerText) &&
+                                             /\.xlsb/.test(r.innerText)).length,
+            ограничения: (раздел.querySelector('.cv-limits') || {}).innerText || '',
+            текст: раздел.innerText,
+        };
+    });
+    t.ok(кв, 'раздел про конвертер есть');
+    // У перечисления «показывает — разбирает — и говорит» метка синяя. Конвертер
+    // в это перечисление не входит, и метка у него другая — иначе он читался бы
+    // как четвёртый пункт списка, которым не является.
+    const синие = await pg.evaluate(() =>
+        [...document.querySelectorAll('h2.pair')].map(h => getComputedStyle(h, '::before').backgroundColor));
+    t.ok(кв && синие.length === 3 && синие.every(c => c === синие[0]) && кв.метка !== синие[0],
+         'метка у конвертера отличается от метки трёх разделов разбора');
+    t.ok(кв && кв.строкФайлов >= 5 && кв.папок >= 4,
+         'дерево папок нарисовано: файлов ' + (кв || {}).строкФайлов + ', папок ' + (кв || {}).папок);
+    t.ok(кв && кв.сКонвертацией === кв.строкФайлов,
+         'в каждой строке видно «было → стало»');
+    t.ok(кв && /Power Query/.test(кв.текст), 'названа задача, ради которой это делается');
+    // Конвертер теряет оформление и требует Chromium — умолчать об этом нельзя.
+    t.ok(кв && /теряются/.test(кв.ограничения) && /формулы/i.test(кв.ограничения),
+         'сказано, что теряется при конвертации');
+    t.ok(кв && /Chrome|Edge/.test(кв.ограничения),
+         'сказано, что нужен Chrome или Edge');
+
     t.раздел('Схема связей нарисована, а не подставлена картинкой');
     const схема = await pg.evaluate(() => {
         const svg = document.querySelector('svg.net');
