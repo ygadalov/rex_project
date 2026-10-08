@@ -75,6 +75,12 @@ def собрать(исходник=None):
     # integrity снимаем: он считался для адреса на CDN, а файл теперь рядом
     s = re.sub(r'\s+integrity="sha384-[^"]+"', '', s)
     s = re.sub(r'\s+crossorigin="anonymous"', '', s)
+    # SheetJS подключается не тегом, а из скрипта — там те же два свойства
+    # ставятся в рантайме. На file:// связка integrity + crossOrigin роняет
+    # загрузку (SRI требует CORS, которого у file:// нет), и ленивый разбор
+    # .xls/.xlsb вместе с конвертером молча не запускался бы.
+    s = re.sub(r"\n\s*s\.integrity = 'sha384-[^']+';", '', s)
+    s = re.sub(r"\n\s*s\.crossOrigin = 'anonymous';", '', s)
 
     os.makedirs(СБОРКА, exist_ok=True)
     цель = os.path.join(СБОРКА, 'app.html')

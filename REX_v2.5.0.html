@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.4.7 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.5.0 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -247,6 +247,55 @@ body.sidebar-collapsed .scope-bar { display: none; }
     body.sidebar-collapsed .nav-item { justify-content: center; padding: 12px 0; gap: 0; }
     body.sidebar-collapsed .nav-item .nav-label, body.sidebar-collapsed .nav-badge { display: none; }
     body.sidebar-collapsed .sidebar-footer { display: none; }
+}
+
+/* ─── Конвертер форматов ─────────────────────────────────────────────────
+   Раздел живёт теми же кирпичами, что и остальные: карточка, чипы,
+   таблица, полоса прогресса. Своего тут только раскладка «из чего → во
+   что» и строка файла с её состоянием. */
+.cv-formats { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; }
+.cv-label { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+            color: var(--text-muted); margin-bottom: 8px; }
+.cv-chips { display: flex; gap: 7px; flex-wrap: wrap; }
+.cv-chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px 7px 10px;
+           border: 1px solid var(--border); border-radius: 999px; cursor: pointer;
+           font-family: 'JetBrains Mono', monospace; font-size: 12.5px; font-weight: 500;
+           color: var(--text-secondary); background: var(--card); transition: .15s; user-select: none; }
+.cv-chip:hover { border-color: var(--primary); }
+.cv-chip input { width: 14px; height: 14px; accent-color: var(--primary); cursor: pointer; }
+.cv-chip:has(input:checked) { border-color: var(--primary); background: var(--primary-light);
+                              color: var(--primary-dark); font-weight: 700; }
+.cv-arrow { color: var(--text-muted); padding-bottom: 7px; }
+/* Обводку задаёт каждый свой значок: общего правила на это в REX нет,
+   глобально выставлены только круглые концы штриха. */
+.cv-arrow svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 2; fill: none; }
+.cv-to select { min-width: 210px; }
+.cv-opts { display: flex; flex-direction: column; gap: 8px; margin-top: 16px;
+           padding-top: 14px; border-top: 1px solid var(--border-light); }
+.cv-opt { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; cursor: pointer; }
+.cv-opt input { width: 15px; height: 15px; accent-color: var(--primary); cursor: pointer; }
+/* Удаление исходника — единственное необратимое действие во всём REX.
+   Красим его как опасное и не прячем за умолчание. */
+.cv-danger { color: var(--danger); font-weight: 600; }
+.cv-danger input { accent-color: var(--danger); }
+
+.cv-done { margin: 14px 0 4px; padding: 13px 16px; border-radius: 10px;
+           border-left: 3px solid var(--success); background: #f0fdf4; color: #14532d;
+           font-size: 13.5px; line-height: 1.6; }
+.cv-done.bad { border-left-color: var(--danger); background: #fef2f2; color: #7f1d1d; }
+.cv-done b { display: block; font-size: 15px; margin-bottom: 3px; }
+
+.cv-path { white-space: normal; overflow-wrap: anywhere; font-size: 12.5px; }
+.cv-state { font-size: 12.5px; }
+.cv-state.ok   { color: #15803d; font-weight: 600; }
+.cv-state.err  { color: var(--danger); font-weight: 600; }
+.cv-state.skip { color: var(--text-muted); }
+.cv-state.work { color: var(--primary); font-weight: 600; }
+
+@media (max-width: 640px) {
+    .cv-formats { flex-direction: column; align-items: stretch; }
+    .cv-arrow { transform: rotate(90deg); align-self: center; padding: 0; }
+    .cv-to select { width: 100%; }
 }
 
 /* ═══════════════════ MAIN ═══════════════════ */
@@ -1183,6 +1232,11 @@ table.matrix td.cell[data-n] { cursor: default; }
             <span class="nav-badge" id="badge-cleanup" hidden></span>
         </button>
 
+        <button class="nav-item" data-page="convert" role="tab" aria-selected="false" aria-controls="page-convert">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5.5 2.5h7l4 4v5"/><path d="M12.5 2.5v4h4"/><path d="M5.5 2.5v11h4"/><rect x="11" y="13.5" width="8.5" height="8" rx="1.5"/><path d="M13.5 17.5h3.5"/><path d="m15.5 15.8 1.7 1.7-1.7 1.7"/></svg></span>
+            <span class="nav-label">Конвертер форматов</span>
+        </button>
+
         <div style="flex:1"></div>
         <div style="border-top:1px solid var(--sidebar-line);margin:4px 16px"></div>
 
@@ -1608,6 +1662,74 @@ table.matrix td.cell[data-n] { cursor: default; }
     </div>
 </section>
 
+<!-- ═══════════ КОНВЕРТЕР ФОРМАТОВ ═══════════
+
+     Единственное место, где REX пишет на диск пользователя, а не только
+     читает. Поэтому здесь всё устроено нарочито осторожно: предупреждение
+     о потерях на виду, галка «удалять исходник» выключена и спрашивает
+     подтверждение, список файлов показывается до запуска.
+     ═══════════════════════════════════════════════════════════════════ -->
+<section class="page-content" id="page-convert" role="tabpanel">
+    <div class="header-top">
+        <h1 class="page-title">Конвертер форматов <span class="subtitle">пакетно, во всех вложенных папках</span></h1>
+    </div>
+
+    <div class="cleanup-warn" id="cv-warn">
+        <b>Это конвертация, а не переименование.</b><span id="cv-warn-info"></span>
+    </div>
+
+    <div class="card" id="cv-unsupported" hidden>
+        <div class="cleanup-warn" style="background:#fef2f2;border-color:#fecaca;color:#7f1d1d">
+            <b>Браузер не умеет работать с папками.</b> Конвертер использует File System Access API —
+            он есть в Chrome и Edge, но не в Firefox и Safari. Откройте REX в Chrome или Edge.
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Что во что<span id="cv-fmt-info"></span></div>
+        <div class="cv-formats">
+            <div class="cv-from">
+                <div class="cv-label">Какие файлы брать</div>
+                <div class="cv-chips" id="cv-from"></div>
+            </div>
+            <div class="cv-arrow" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            </div>
+            <div class="cv-to">
+                <div class="cv-label">Во что превращать</div>
+                <select id="cv-to" class="cl-search" aria-label="Целевой формат"></select>
+            </div>
+        </div>
+        <div class="cv-opts">
+            <label class="cv-opt"><input type="checkbox" id="cv-skip" checked>
+                <span>Пропускать файлы, которые уже есть в целевом формате</span></label>
+            <label class="cv-opt cv-danger"><input type="checkbox" id="cv-drop">
+                <span>Удалять исходный файл после успешной конвертации</span></label>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Папка
+            <span class="hint" id="cv-sum">не выбрана</span>
+            <span style="flex:1"></span>
+            <button class="btn btn-sm btn-outline" id="cv-pick">Выбрать папку</button>
+            <button class="btn btn-sm" id="cv-run" disabled>Конвертировать</button>
+        </div>
+        <div class="progress-box" id="cv-progress-box">
+            <div class="progress-track"><div class="progress-fill" id="cv-progress-fill"></div></div>
+        </div>
+        <div class="cv-done" id="cv-done" hidden></div>
+        <div class="table-box" id="cv-table-box" hidden>
+            <table class="wide">
+                <thead><tr><th>№</th><th>Путь</th><th class="num-cell">Размер</th><th>Что будет</th></tr></thead>
+                <tbody id="cv-rows"></tbody>
+            </table>
+        </div>
+        <div class="empty-state" id="cv-empty">Выберите папку — REX пройдёт по ней и всем вложенным
+            и соберёт список таблиц.</div>
+    </div>
+</section>
+
 <!-- ═══════════ ОТЧЁТ ═══════════ -->
 <section class="page-content" id="page-report" role="tabpanel">
     <div class="header-top">
@@ -1657,7 +1779,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.4.7';
+const APP_VERSION = '2.5.0';
 
 const APP = {
     books: [],          // разобранные книги
@@ -7902,6 +8024,226 @@ const CAP_PILL = {
     none: '<span class="pill pill-red"><span class="pill-dot"></span>нет</span>',
 };
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   КОНВЕРТЕР ФОРМАТОВ
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Единственный раздел, который пишет на диск. Всё остальное в REX только
+   читает, поэтому здесь нарочно больше тормозов, чем функций: список
+   показывается до запуска, удаление исходника спрашивает подтверждение,
+   а всё, что теряется при конвертации, названо на самой странице.
+
+   Работает через File System Access API (showDirectoryPicker) — он есть в
+   Chrome и Edge и отсутствует в Firefox и Safari. Без него раздел честно
+   говорит, что не может, вместо того чтобы молча ничего не делать.
+
+   Читает и пишет SheetJS — та же библиотека, которой разбираются .xls и
+   .xlsb, и подгружается она тем же ensureSheetJS(). */
+
+const CONV_FORMATS = {
+    xlsx: { book: 'xlsx',  label: 'XLSX — Excel 2007 и новее' },
+    xlsb: { book: 'xlsb',  label: 'XLSB — двоичный, самый компактный' },
+    xls:  { book: 'biff8', label: 'XLS — Excel 97–2003' },
+    xlsm: { book: 'xlsm',  label: 'XLSM — с макросами' },
+    ods:  { book: 'ods',   label: 'ODS — OpenDocument' },
+};
+const CONV_FROM_DEFAULT = ['xls', 'xlsx'];
+const CONV_TO_DEFAULT = 'xlsb';
+
+const CONV = {
+    root: null,      // выбранная папка
+    found: [],       // всё, что нашли: { dir, handle, path, name, ext, size }
+    picked: [],      // отобранное под текущие настройки, с привязанной строкой таблицы
+    busy: false,
+};
+
+const convExt = имя => (имя.match(/\.([^.]+)$/) || [])[1] ? имя.match(/\.([^.]+)$/)[1].toLowerCase() : '';
+const convTarget = (имя, во) => имя.replace(/\.[^.]+$/, '.' + во);
+const convSupported = () => typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+
+function buildConverter() {
+    $('#cv-unsupported').hidden = convSupported();
+    if (!convSupported()) $('#cv-pick').disabled = true;
+
+    // Предупреждение о потерях: первая фраза на виду, разбор — под (i).
+    // Прятать его целиком нельзя: человек узнает о потерях уже после.
+    $('#cv-warn-info').innerHTML = infoBtn(
+        'Сменить расширение в имени файла недостаточно — Excel такой файл не откроет. ' +
+        'REX читает книгу целиком и записывает заново в другом формате.<br><br>' +
+        '<b>Переносятся:</b> значения ячеек, листы и объединения.<br>' +
+        '<b>Формулы</b> сохраняются только при конвертации в XLSX; в XLSB, XLS и ODS ' +
+        'попадают их последние посчитанные значения.<br>' +
+        '<b>Теряются:</b> оформление (цвета, шрифты, границы), диаграммы, картинки, ' +
+        'сводные таблицы, макросы, модель данных и запросы Power Query.<br><br>' +
+        'Если нужна конвертация без потерь — её делает только сам Excel.');
+
+    $('#cv-fmt-info').innerHTML = infoBtn(
+        'Файлы, которые уже лежат в целевом формате, в список не попадают: ' +
+        'конвертировать XLSX в XLSX незачем.<br><br>' +
+        'XLSM как цель не предлагается: макросы при конвертации всё равно теряются, ' +
+        'и формат «с макросами» без макросов смысла не имеет.');
+
+    $('#cv-from').innerHTML = Object.keys(CONV_FORMATS).map(ext =>
+        '<label class="cv-chip"><input type="checkbox" value="' + ext + '"' +
+        (CONV_FROM_DEFAULT.indexOf(ext) !== -1 ? ' checked' : '') + '>.' + ext + '</label>').join('');
+
+    $('#cv-to').innerHTML = Object.entries(CONV_FORMATS)
+        .filter(([ext]) => ext !== 'xlsm')
+        .map(([ext, f]) => '<option value="' + ext + '"' +
+             (ext === CONV_TO_DEFAULT ? ' selected' : '') + '>' + esc(f.label) + '</option>').join('');
+}
+
+/** Обход папки вглубь. Временные файлы Excel (~$имя) пропускаем: это замки
+    открытых книг, а не таблицы. */
+async function convScan(dir, prefix, out) {
+    for await (const [имя, handle] of dir.entries()) {
+        const path = prefix + '/' + имя;
+        if (handle.kind === 'directory') {
+            await convScan(handle, path, out);
+        } else if (CONV_FORMATS[convExt(имя)] && имя.indexOf('~$') !== 0) {
+            const f = await handle.getFile();
+            out.push({ dir, handle, path, name: имя, ext: convExt(имя), size: f.size });
+        }
+    }
+}
+
+function convRender() {
+    const из = new Set($$('#cv-from input:checked').map(i => i.value));
+    const во = $('#cv-to').value;
+    CONV.picked = CONV.found.filter(f => из.has(f.ext) && f.ext !== во);
+
+    const есть = CONV.picked.length > 0;
+    $('#cv-table-box').hidden = !есть;
+    $('#cv-empty').hidden = !!CONV.root;
+    $('#cv-run').disabled = !есть || CONV.busy;
+
+    $('#cv-rows').innerHTML = CONV.picked.map((f, i) =>
+        '<tr><td class="num-cell">' + (i + 1) + '</td>' +
+        '<td class="cv-path">' + esc(f.path) + '</td>' +
+        '<td class="num-cell">' + fmtBytes(f.size) + '</td>' +
+        '<td class="cv-state">→ ' + esc(convTarget(f.name, во)) + '</td></tr>').join('');
+    CONV.picked.forEach((f, i) => { f.row = $('#cv-rows').rows[i]; });
+
+    if (CONV.root) {
+        $('#cv-sum').textContent = 'папка «' + CONV.root.name + '» · к конвертации ' +
+            plural(CONV.picked.length, ['файл', 'файла', 'файлов']) +
+            ' из ' + plural(CONV.found.length, ['найденного', 'найденных', 'найденных']);
+        if (!есть) $('#cv-empty').hidden = false,
+                   $('#cv-empty').textContent = 'В папке «' + CONV.root.name +
+                       '» нет файлов выбранных форматов — или они уже в целевом формате.';
+    }
+}
+
+function convState(f, текст, класс) {
+    if (!f.row) return;
+    const cell = f.row.cells[3];
+    cell.textContent = текст;
+    cell.className = 'cv-state ' + (класс || '');
+}
+
+function convLock(locked) {
+    CONV.busy = locked;
+    $$('#cv-from input, #cv-to, #cv-skip, #cv-drop').forEach(el => { el.disabled = locked; });
+    $('#cv-pick').disabled = locked || !convSupported();
+    $('#cv-run').disabled = locked || !CONV.picked.length;
+}
+
+async function convPick() {
+    let dir;
+    try {
+        dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+    } catch (e) {
+        return;                       // диалог закрыли — это не ошибка
+    }
+    $('#cv-done').hidden = true;
+    CONV.root = dir;
+    CONV.found = [];
+    $('#cv-sum').textContent = 'читаю папку…';
+    try {
+        await convScan(dir, dir.name, CONV.found);
+    } catch (e) {
+        showNotification('Не удалось прочитать папку: ' + (e.message || e), 'error');
+        CONV.root = null;
+        return;
+    }
+    CONV.found.sort((a, b) => a.path.localeCompare(b.path, 'ru', { numeric: true }));
+    convRender();
+}
+
+async function convRun() {
+    const во = $('#cv-to').value;
+    const пропускать = $('#cv-skip').checked;
+    const удалять = $('#cv-drop').checked;
+
+    // Удаление исходников необратимо, а список может быть длинным — спрашиваем
+    // отдельно и прямым текстом, сколько файлов исчезнет.
+    if (удалять && !confirm('Исходные файлы будут удалены после конвертации: ' +
+            CONV.picked.length + ' шт. Отменить это нельзя. Продолжить?')) return;
+
+    let XLSX;
+    try {
+        XLSX = await ensureSheetJS();
+    } catch (e) {
+        showNotification('Конвертер не запустился: ' + e.message, 'error');
+        return;
+    }
+
+    convLock(true);
+    $('#cv-done').hidden = true;
+    $('#cv-progress-box').classList.add('on');
+    $('#cv-progress-fill').style.width = '0%';
+
+    let готово = 0, пропущено = 0, ошибок = 0;
+    for (let i = 0; i < CONV.picked.length; i++) {
+        const f = CONV.picked[i];
+        const цель = convTarget(f.name, во);
+        try {
+            if (пропускать && await convExists(f.dir, цель)) {
+                convState(f, 'пропущен: ' + цель + ' уже есть', 'skip');
+                пропущено++;
+            } else {
+                convState(f, 'конвертирую…', 'work');
+                const байты = await (await f.handle.getFile()).arrayBuffer();
+                const wb = XLSX.read(байты, { type: 'array', cellFormula: true, cellNF: true, cellDates: true });
+                const out = XLSX.write(wb, { bookType: CONV_FORMATS[во].book, type: 'array', compression: true });
+                const куда = await f.dir.getFileHandle(цель, { create: true });
+                const w = await куда.createWritable();
+                await w.write(out);
+                await w.close();
+                if (удалять) await f.dir.removeEntry(f.name);
+                convState(f, 'готово → ' + цель + (удалять ? ', исходник удалён' : ''), 'ok');
+                готово++;
+            }
+        } catch (e) {
+            convState(f, 'ошибка: ' + (e.message || e), 'err');
+            ошибок++;
+        }
+        $('#cv-progress-fill').style.width = ((i + 1) / CONV.picked.length * 100) + '%';
+        $('#cv-sum').textContent = 'обработано ' + (i + 1) + ' из ' + CONV.picked.length +
+            ' · готово ' + готово + ' · пропущено ' + пропущено + ' · ошибок ' + ошибок;
+        await nextFrame();            // даём странице перерисоваться
+    }
+
+    const d = $('#cv-done');
+    d.hidden = false;
+    d.classList.toggle('bad', ошибок > 0);
+    d.innerHTML = '<b>' + (ошибок ? 'Конвертация прошла с ошибками' : 'Конвертация завершена') + '</b>' +
+        'Сконвертировано в ' + во.toUpperCase() + ': ' + готово +
+        (пропущено ? ' · пропущено (уже были): ' + пропущено : '') +
+        (ошибок ? ' · с ошибкой: ' + ошибок + ' — подробности в таблице' : '');
+
+    // Список устарел: файлы могли появиться и исчезнуть. Для нового прогона
+    // папку выбирают заново — иначе вторая конвертация пойдёт по призракам.
+    convLock(false);
+    CONV.root = null;
+    CONV.picked = [];
+    $('#cv-run').disabled = true;
+}
+
+async function convExists(dir, имя) {
+    try { await dir.getFileHandle(имя); return true; } catch (e) { return false; }
+}
+
 function renderCapabilities() {
     // Оговорка про формат нужна один раз и не каждому — таблица ниже говорит
     // сама за себя, а на первом экране это были две лишние строки текста.
@@ -8080,6 +8422,14 @@ function initEvents() {
         if (APP.graph.nodes.length) renderGraph();
     });
     $('#btn-imp-csv').onclick = () => download('REX_план_очистки.csv', impactCSV(), 'text/csv;charset=utf-8');
+
+    /* Конвертер. Собирается один раз при старте: он не зависит от того,
+       загружена ли книга, и доступен сразу. */
+    buildConverter();
+    $('#cv-pick').onclick = convPick;
+    $('#cv-run').onclick = convRun;
+    $('#cv-from').addEventListener('change', convRender);
+    $('#cv-to').addEventListener('change', convRender);
 
     /* Подсказки (i). Показываются по наведению: значок не выглядит кнопкой,
        и «сюда надо кликнуть» из него не читается. В «Качестве» клик вдобавок
