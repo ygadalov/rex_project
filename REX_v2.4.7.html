@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.4.6 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.4.7 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -136,10 +136,22 @@ body {
 /* ═══════════════════ SIDEBAR ═══════════════════ */
 .sidebar {
     width: var(--sidebar-w); background: var(--sidebar-bg); color: var(--sidebar-text);
-    display: flex; flex-direction: column; position: fixed; height: 100vh; z-index: 1000;
+    display: flex; flex-direction: column; position: fixed; z-index: 1000;
     transition: transform .3s cubic-bezier(.4,0,.2,1), width .3s cubic-bezier(.4,0,.2,1);
     border-right: 1px solid var(--sidebar-edge);
+    /* 100vh на телефоне — это «большой» вьюпорт: он считается так, будто
+       адресная строка свёрнута, а панель навигации системы отсутствует.
+       Меню получалось выше видимой области, и подвал с подписью уезжал под
+       кнопки навигации — его просто не было видно. dvh меряет то, что видно
+       сейчас; vh остаётся запасным для браузеров постарше. */
+    height: 100vh;
+    height: 100dvh;
+    /* И ещё отступ под «домашнюю» полоску iPhone — она лежит поверх страницы. */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+/* Список разделов прокручивается, подвал — нет: при нехватке высоты сжиматься
+   должен список, а не строка, ради которой всё и затевалось. */
+.sidebar-footer { flex-shrink: 0; }
 .sidebar-header {
     padding: 18px 24px 14px; border-bottom: 1px solid var(--sidebar-line);
     display: flex; flex-direction: column; gap: 7px; color: var(--sidebar-strong);
@@ -1181,7 +1193,7 @@ table.matrix td.cell[data-n] { cursor: default; }
     </nav>
 
     <div class="sidebar-footer">
-        <span class="sf-line" id="sidebar-brand">Powered by <b>Gadalov BI</b> | AI-Augmented Solutions</span>
+        <span class="sf-line" id="sidebar-brand">Powered by <b>Gadalov BI</b> · AI-Augmented Solutions</span>
     </div>
 </aside>
 
@@ -1645,7 +1657,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.4.6';
+const APP_VERSION = '2.4.7';
 
 const APP = {
     books: [],          // разобранные книги

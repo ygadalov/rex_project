@@ -160,6 +160,53 @@ module.exports = async function () {
     t.ok(полосы >= 4, 'в значке видны и палочка, и точка отдельно от неё: полос чернил ' + полосы +
        ' (без точки их три: верх фигуры, палочка, низ фигуры)');
 
+    t.раздел('Подпись в подвале меню видна и на телефоне');
+    // 100vh на телефоне — «большой» вьюпорт: считается так, будто адресная
+    // строка свёрнута, а панели навигации нет. Меню оказывалось выше видимой
+    // области, и подвал уезжал под кнопки навигации. Правка — в dvh; headless
+    // разницы vh и dvh не воспроизводит, поэтому саму запись и сторожим.
+    const объявление = await pg.evaluate(() => {
+        const нужное = [];
+        for (const лист of document.styleSheets) {
+            let правила; try { правила = лист.cssRules; } catch (e) { continue; }
+            for (const п of правила) {
+                if (п.selectorText === '.sidebar') нужное.push(п.style.getPropertyValue('height'));
+            }
+        }
+        return нужное;
+    });
+    t.ok(объявление.some(v => /dvh/.test(v)),
+         'высота меню задана в dvh: ' + JSON.stringify(объявление));
+
+    for (const [ш, в] of [[390, 640], [390, 844]]) {
+        await pg.setViewportSize({ width: ш, height: в });
+        await pg.waitForTimeout(300);
+        const r = await pg.evaluate(async () => {
+            const кн = document.querySelector('#mobile-menu-btn');
+            if (getComputedStyle(кн).display !== 'none') {
+                кн.click(); await new Promise(r => setTimeout(r, 450));
+            }
+            const f = document.querySelector('.sidebar-footer').getBoundingClientRect();
+            const строка = document.querySelector('#sidebar-brand');
+            const rb = строка.getBoundingClientRect();
+            const lh = parseFloat(getComputedStyle(строка).lineHeight) || 16;
+            document.querySelector('#overlay').click();
+            return { низ: Math.round(f.bottom), окно: innerHeight, высота: Math.round(f.height),
+                     строк: Math.round(rb.height / lh) };
+        });
+        t.ok(r.высота > 0 && r.низ <= r.окно + 1,
+             ш + '×' + в + ': подвал внутри окна (низ ' + r.низ + ' при ' + r.окно + ')');
+        t.ok(r.строк === 1, ш + '×' + в + ': подпись укладывается в одну строку');
+    }
+    await pg.setViewportSize({ width: 1450, height: 950 });
+    await pg.waitForTimeout(300);
+
+    t.раздел('Разделитель в подписи — точка, а не палка');
+    const подпись = await pg.evaluate(() => document.querySelector('#sidebar-brand').textContent);
+    // «|» в мелком кегле рядом с «BI» читается как ещё одна «I»
+    t.ok(!подпись.includes('|'), 'вертикальной черты в подписи нет: ' + подпись);
+    t.ok(подпись.includes('·'), 'разделителем стоит средняя точка');
+
     t.раздел('Строки индекса здоровья не переносятся');
     await страница(pg, 'overview');
     const инд = await pg.evaluate(() => [...document.querySelectorAll('.health-bar-row')].map(r => {
