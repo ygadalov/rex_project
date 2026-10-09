@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.5.1 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.5.2 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -417,6 +417,8 @@ body.graph-page .mobile-header { position: static; }
 .kpi::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--kpi-color, var(--primary)); }
 .kpi .kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); font-weight: 700; margin-bottom: 5px; }
 .kpi .kpi-value { font-size: 25px; font-weight: 800; line-height: 1.1; font-family: 'JetBrains Mono', monospace; }
+.nd { color: var(--text-muted); font-size: 11px; font-weight: 500; border-bottom: 1px dotted var(--border); cursor: help; }
+.kpi .kpi-ge { font-size: 14px; font-weight: 600; opacity: .55; font-family: var(--font); }
 .kpi .kpi-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
 .kpi.clickable { cursor: pointer; transition: transform .15s, box-shadow .15s; }
 .kpi.clickable:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
@@ -435,11 +437,14 @@ body.graph-page .mobile-header { position: static; }
 /* Колонка названий — по самому длинному названию, а не по фиксированным
    130 px: «Производительность» со значком (i) в них не влезала и переносилась.
    max-content держит это и при подменном шрифте, пока грузится Manrope. */
-.health-bar-row { display: grid; grid-template-columns: max-content 1fr 40px; gap: 10px; align-items: center; font-size: 12px; }
+.health-bar-row { display: grid; grid-template-columns: max-content 1fr max-content; gap: 10px; align-items: center; font-size: 12px; }
 .health-bar-row > span:first-child { display: inline-flex; align-items: center; white-space: nowrap; }
 .health-bar-track { height: 7px; border-radius: 4px; background: var(--border-light); overflow: hidden; }
 .health-bar-fill { display: block; height: 100%; border-radius: 4px; transition: width .5s ease; }
-.health-bar-num { text-align: right; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12px; }
+.health-bar-num { text-align: right; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12px; white-space: nowrap; }
+/* Знаменатель бледнее и мельче: он нужен, чтобы число читалось как балл,
+   а не как счётчик находок, но перетягивать внимание на себя не должен. */
+.hb-max { font-size: 9.5px; font-weight: 500; opacity: .5; }
 
 /* ═══════════════════ ТАБЛИЦЫ ═══════════════════ */
 .table-box {
@@ -1126,7 +1131,7 @@ table.matrix td.cell[data-n] { cursor: default; }
     .health-bars { min-width: 100%; }
     /* Уведомление сверху перекрывало кнопку меню — на телефоне уводим стек вниз */
     .notification-stack { top: auto; bottom: 14px; left: 14px; right: 14px; max-width: none; }
-    .health-bar-row { grid-template-columns: max-content 1fr 32px; font-size: 10.5px; }
+    .health-bar-row { grid-template-columns: max-content 1fr max-content; font-size: 10.5px; }
     .issue-body { padding-left: 15px; }
     /* На телефоне граф остаётся доступным, но не претендует на роль главного экрана */
     .graph-body { flex-direction: column; }
@@ -1607,6 +1612,7 @@ table.matrix td.cell[data-n] { cursor: default; }
     <div class="header-top">
         <h1 class="page-title">Качество данных <span class="subtitle" id="quality-sub"></span></h1>
     </div>
+    <div class="cleanup-warn" id="quality-cut" hidden></div>
     <div class="sev-filter" id="sev-filter"></div>
     <div id="quality-list"></div>
 </section>
@@ -1779,7 +1785,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.5.1';
+const APP_VERSION = '2.5.2';
 
 const APP = {
     books: [],          // разобранные книги
@@ -1842,6 +1848,14 @@ function infoBtn(html) {
    объектов адресуются номером книги («s:0:Лист1»), и подмена массива
    сбила бы эту адресацию. Поэтому отрисовщики продолжают ходить по
    APP.books с настоящим индексом, а лишнее отсекают через inScope. */
+
+/** Листы, которые оказались слишком велики и по ячейкам не разбирались.
+    Важно для всего, что считается по ячейкам: ошибки, разрывы колонок,
+    ДВССЫЛ, ссылки на целые колонки. Молчать об этом нельзя — счёт выйдет
+    меньше настоящего, и человек решит, что в книге чисто. */
+function cutSheets() {
+    return scopedBooks().reduce((a, b) => a.concat((b.sheets || []).filter(s => s.truncated)), []);
+}
 
 /** Показывать ли книгу с этим индексом при текущей области. */
 function inScope(bi) { return APP.scope === bi; }
@@ -2323,11 +2337,20 @@ function scanSheetXml(xml, sheet, sst) {
 
     if (xml.length > MAX_SHEET_SCAN) {
         sheet.truncated = true;
+        sheet.scanBytes = xml.length;
         sheet.formulaCount = (xml.match(/<f[\s>\/]/g) || []).length;
         sheet.heat = { w: hw, h: hh, data: heat };
         // Ячейки на таком листе не разбираем, но правил на нём десятки, а не
         // тысячи: прочитать их дёшево, а без них «имя не используется» соврёт.
+        //
+        // Счётчики ячеек ставим в null, а не оставляем пустыми. Разница
+        // принципиальная: undefined читается как «ноль» — и правилами, и
+        // журналом, и индексом здоровья. На книге с листом в 97 МБ это
+        // давало «ошибок в ячейках: 3» при настоящих ста двадцати трёх
+        // тысячах. null означает «не смотрели», и это видно.
         Object.assign(sheet, {
+            cellCount: null, constCount: null, textCount: null, errorCount: null,
+            errKinds: null, errorCells: null,
             refsOut: new Map(), tableRefs: new Map(), nameRefs: new Map(),
             extRefs: new Map(), useKinds: new Map(),
         });
@@ -2806,7 +2829,13 @@ async function parseOOXML(bytes, book, log) {
                 }));
             }
         }
-        log('ok', 'Лист «' + sh.name + '»: формул ' + fmtNum(sh.formulaCount) + ', ошибок ' + fmtNum(sh.errorCount));
+        if (sh.truncated) {
+            log('warn', 'Лист «' + sh.name + '»: ' + fmtBytes(sh.scanBytes) +
+                ' — ячейки не разбирались, иначе браузер встанет. Формул ' +
+                fmtNum(sh.formulaCount) + ', но ошибки и разбор по колонкам по этому листу неизвестны.');
+        } else {
+            log('ok', 'Лист «' + sh.name + '»: формул ' + fmtNum(sh.formulaCount) + ', ошибок ' + fmtNum(sh.errorCount));
+        }
         await nextFrame();
     }
 
@@ -4349,6 +4378,10 @@ function renderOverview() {
     const ext = sum(b => (b.externalLinks || []).length);
     const pivots = sum(b => (b.pivots || []).length);
     const hidden = sum(b => b.sheets.filter(s => s.state !== 'visible').length);
+    /* Листы, не разобранные по ячейкам, не дают ни формул, ни ошибок. Складывать
+       их нули молча нельзя: карточка «Ошибок 3» на книге с сотней тысяч ошибок —
+       это не округление, а неверный ответ. Отмечаем такие числа как неполные. */
+    const срез = cutSheets();
 
     const ICO = '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
     $('#overview-file').innerHTML = B.map(b => {
@@ -4364,30 +4397,41 @@ function renderOverview() {
 
     const kpi = [
         { label: 'Листов',        value: sheets,   sub: hidden ? hidden + ' скрытых' : 'все видимые', color: 'var(--n-sheet)', page: 'sheets' },
-        { label: 'Формул',        value: formulas, sub: 'в ячейках', color: 'var(--primary)', page: 'formulas' },
+        { label: 'Формул',        value: formulas, sub: 'в ячейках', color: 'var(--primary)', page: 'formulas', cut: true },
         { label: 'Умных таблиц',  value: tables,   sub: 'ListObject', color: 'var(--n-table)', page: 'sheets' },
         { label: 'Запросов PQ',   value: queries,  sub: queries ? 'M-код доступен' : 'не найдено', color: 'var(--n-query)', page: 'pq' },
         { label: 'Сводных',       value: pivots,   sub: 'PivotTable', color: 'var(--n-pivot)', page: 'model' },
         { label: 'Внешних книг',  value: ext,      sub: ext ? 'проверьте пути' : 'нет', color: 'var(--n-extbook)', page: 'formulas' },
-        { label: 'Ошибок',        value: errors,   sub: 'в ячейках', color: 'var(--danger)', page: 'quality' },
+        { label: 'Ошибок',        value: errors,   sub: 'в ячейках', color: 'var(--danger)', page: 'quality', cut: true },
         { label: 'Связей в графе',value: APP.graph.edges.length, sub: APP.graph.nodes.length + ' объектов', color: 'var(--purple)', page: 'graph' },
     ];
-    $('#overview-kpi').innerHTML = kpi.map(k =>
-        '<div class="kpi clickable" style="--kpi-color:' + k.color + '" data-goto="' + k.page + '" tabindex="0" role="button">' +
+    $('#overview-kpi').innerHTML = kpi.map(k => {
+        const неполно = k.cut && срез.length;
+        return '<div class="kpi clickable" style="--kpi-color:' + k.color + '" data-goto="' + k.page + '" tabindex="0" role="button">' +
         '<div class="kpi-label">' + esc(k.label) + '</div>' +
-        '<div class="kpi-value">' + fmtNum(k.value) + '</div>' +
-        '<div class="kpi-sub">' + esc(k.sub) + '</div></div>').join('');
+        '<div class="kpi-value">' + (неполно ? '<span class="kpi-ge">от</span> ' : '') + fmtNum(k.value) + '</div>' +
+        '<div class="kpi-sub">' + esc(неполно
+            ? 'без ' + plural(срез.length, ['большого листа', 'больших листов', 'больших листов'])
+            : k.sub) + '</div></div>';
+    }).join('');
 
     /* индекс здоровья */
     const h = APP.health;
     $('#health-why').innerHTML = infoBtn(
+        '<b>Это баллы, а не счётчик находок.</b> «Ошибки 0» значит «хуже некуда», ' +
+        'а не «ошибок нет».<br><br>' +
         'Каждая из пяти строк начинается со 100, и каждое сработавшее правило снимает ' +
         'баллы: чем оно важнее и чем больше находок, тем больше штраф. Считается по ' +
         'логарифму, а не по числу находок напрямую — 500 ошибок не должны выглядеть ' +
         '«в сто раз хуже», чем пять.<br><br>' +
         'Итог наверху — среднее по пяти строкам. Это оценка файла, а не работы: книга ' +
         'может считать правильно и при 40 баллах, просто её тяжело сопровождать.<br><br>' +
-        'Наведитесь на название строки — там сказано, что в неё входит и где это смотреть.');
+        'Наведитесь на название строки — там сказано, что в неё входит и где это смотреть.' +
+        (cutSheets().length
+            ? '<br><br><b>Внимание: в этой книге есть листы, которые не разбирались по ячейкам</b> — ' +
+              'они слишком велики. Находки по ним не посчитаны, поэтому строка «Ошибки» ' +
+              'оценивает книгу мягче, чем следовало бы; подробности — на вкладке «Качество данных».'
+            : ''));
     const col = v => v >= 80 ? '#10b981' : v >= 60 ? '#f59e0b' : '#ef4444';
     const R = 50, C = 2 * Math.PI * R;
     $('#overview-health').innerHTML =
@@ -4410,7 +4454,8 @@ function renderOverview() {
                 : '<br><br><b>В этой книге претензий по этой категории нет</b> — отсюда и 100.';
             return '<div class="health-bar-row"><span>' + esc(c) + infoBtn(HEALTH_NOTES[c] + из) + '</span>' +
             '<span class="health-bar-track"><span class="health-bar-fill" style="width:' + h.scores[c] + '%;background:' + col(h.scores[c]) + '"></span></span>' +
-            '<span class="health-bar-num" style="color:' + col(h.scores[c]) + '">' + h.scores[c] + '</span></div>';
+            '<span class="health-bar-num" style="color:' + col(h.scores[c]) + '">' + h.scores[c] +
+                '<span class="hb-max">/100</span></span></div>';
         }).join('') +
         '</div>';
 
@@ -4458,7 +4503,7 @@ function sheetRows() {
             role: (node && node.role) || '—',
             impact: node ? ({ used: 0, output: 1, maybe: 2, none: 3 })[impactOf(node.id).level] : 3,
             impactLevel: node ? impactOf(node.id).level : 'none',
-            formulas: s.formulaCount || 0, consts: s.constCount || 0, errors: s.errorCount || 0,
+            formulas: s.formulaCount || 0, consts: s.constCount, errors: s.errorCount, cut: !!s.truncated,
             inDeg: node ? node.inDeg : 0, outDeg: node ? node.outDeg : 0,
             dim: s.dimension || '—', sheet: s, nodeId: node ? node.id : null,
         });
@@ -4497,8 +4542,9 @@ function renderSheets() {
             '<td><span class="pill ' + ro[0] + '">' + ro[1] + '</span></td>' +
             '<td>' + (r.nodeId ? impactBadge(r.nodeId) : '') + '</td>' +
             '<td class="num-cell">' + fmtNum(r.formulas) + '</td>' +
-            '<td class="num-cell">' + fmtNum(r.consts) + '</td>' +
-            '<td class="num-cell"' + (r.errors ? ' style="color:var(--danger);font-weight:700"' : '') + '>' + fmtNum(r.errors) + '</td>' +
+            '<td class="num-cell">' + (r.cut ? '<span class="nd" title="лист слишком велик — ячейки не разбирались">н/д</span>' : fmtNum(r.consts)) + '</td>' +
+            '<td class="num-cell"' + (r.errors ? ' style="color:var(--danger);font-weight:700"' : '') + '>' +
+                (r.cut ? '<span class="nd" title="лист слишком велик — ячейки не разбирались">н/д</span>' : fmtNum(r.errors)) + '</td>' +
             '<td class="num-cell">' + fmtNum(r.inDeg) + '</td>' +
             '<td class="num-cell">' + fmtNum(r.outDeg) + '</td>' +
             '<td class="mono" style="font-size:11px;color:var(--text-muted)">' + esc(r.dim) + '</td>' +
@@ -4648,11 +4694,12 @@ function showSheetDetail(bookIdx, name) {
 
     $('#sheet-detail-info').innerHTML =
         '<strong>Диапазон:</strong> ' + esc(sh.dimension || '—') + ' &nbsp;·&nbsp; ' +
-        '<strong>заполнено:</strong> ' + fmtNum(sh.cellCount) + ' яч.<br>' +
+        '<strong>заполнено:</strong> ' + (sh.truncated ? 'не считалось' : fmtNum(sh.cellCount) + ' яч.') + '<br>' +
         '<strong>Формул:</strong> ' + fmtNum(sh.formulaCount) + ' &nbsp;·&nbsp; ' +
-        '<strong>констант:</strong> ' + fmtNum(sh.constCount) + ' &nbsp;·&nbsp; ' +
-        '<strong>текста:</strong> ' + fmtNum(sh.textCount) + ' &nbsp;·&nbsp; ' +
-        '<strong>ошибок:</strong> ' + fmtNum(sh.errorCount) + '<br>' +
+        (sh.truncated ? '' :
+            '<strong>констант:</strong> ' + fmtNum(sh.constCount) + ' &nbsp;·&nbsp; ' +
+            '<strong>текста:</strong> ' + fmtNum(sh.textCount) + ' &nbsp;·&nbsp; ') +
+        '<strong>ошибок:</strong> ' + (sh.truncated ? 'не считалось — лист слишком велик' : fmtNum(sh.errorCount)) + '<br>' +
         (((node || {}).hosted || []).length
             ? '<strong>На листе лежит:</strong> ' + esc(node.hosted.map(nm).join(', ')) + '<br>' : '') +
         (((sh.columns || []).length)
@@ -4975,6 +5022,26 @@ let sevFilter = 'all';
 const ISSUE_ITEMS_SHOWN = 200;   // больше в DOM класть незачем — счётчик остаётся полным
 
 function renderQuality() {
+    /* Если самый большой лист не разбирался по ячейкам, список находок
+       заведомо неполон. Сказать об этом надо здесь, а не только в журнале
+       загрузки, который к этому моменту уже прокручен и забыт. */
+    const срезано = cutSheets();
+    const пред = $('#quality-cut');
+    пред.hidden = !срезано.length;
+    if (срезано.length) {
+        пред.innerHTML = '<b>Список неполон: ' +
+            plural(срезано.length, ['лист не разбирался', 'листа не разбирались', 'листов не разбирались']) +
+            ' по ячейкам.</b>' + infoBtn(
+            'Слишком большой лист REX по ячейкам не читает — иначе браузер встанет на минуты. ' +
+            'Пропущены: ' + срезано.map(s => '«' + esc(s.name) + '» (' + fmtBytes(s.scanBytes) + ')').join(', ') +
+            '.<br><br>Поэтому по этим листам не посчитаны находки, которые видны только в ячейках: ' +
+            'ошибки <code>#ССЫЛКА!</code> и <code>#Н/Д</code>, значения, вбитые посреди формульной ' +
+            'колонки, <code>ДВССЫЛ</code> и ссылки на целые колонки. Всё остальное — имена, ' +
+            'связи, внешние книги, режим пересчёта — посчитано по всей книге.<br><br>' +
+            'Чтобы разобрать такой лист, вынесите его в отдельный файл или удалите лишние строки: ' +
+            'чаще всего объём даёт «призрачный» диапазон далеко за данными.');
+    }
+
     const iss = scopedIssues();
     const counts = { all: iss.length };
     Object.keys(SEV).forEach(s => counts[s] = iss.filter(i => i.severity === s).length);
@@ -5616,10 +5683,12 @@ function impactCaveats() {
     if (anyBook(b => (b.externalLinks || []).length)) out.push({ id: 'ext', scope: ['sheet', 'name', 'table'],
         title: 'Книга связана с другими файлами',
         text: 'Связь видно только с этой стороны. Другие книги могут ссылаться сюда, и такие ссылки в этом файле не хранятся.' });
-    const cut = scopedBooks().reduce((a, b) => a + (b.sheets || []).filter(s => s.truncated).length, 0);
-    if (cut) out.push({ id: 'big', scope: ['sheet', 'name', 'table', 'query', 'pivot', 'modeltable', 'measure'],
-        title: 'Слишком большие листы: ' + cut + ' — формулы в них не разбирались',
-        text: 'Лист такого размера REX пропускает целиком, чтобы не повесить браузер. Ссылки из его формул не учтены ни для одного объекта.' });
+    const cut = cutSheets();
+    if (cut.length) out.push({ id: 'big', scope: ['sheet', 'name', 'table', 'query', 'pivot', 'modeltable', 'measure'],
+        title: 'Листы, не разобранные по ячейкам: ' + cut.length,
+        text: 'Лист такого размера REX по ячейкам не читает, иначе браузер встанет на минуты — пропущены ' +
+              cut.map(s => '«' + s.name + '» (' + fmtBytes(s.scanBytes) + ')').join(', ') +
+              '. Ссылки из формул этих листов не учтены ни для одного объекта, и ошибки в их ячейках не посчитаны.' });
     return out;
 }
 
@@ -6511,7 +6580,7 @@ function impactCSV() {
             IMPACT[im.level].label, im.affected.size, who.join(', '),
             im.caveats.map(c => c.title).join(' | '),
             n.type === 'sheet' ? (ref.formulaCount || 0) : '',
-            n.type === 'sheet' ? (ref.errorCount || 0) : '',
+            n.type === 'sheet' ? (ref.truncated ? 'н/д' : (ref.errorCount || 0)) : '',
         ].map(x => '"' + String(x == null ? '' : x).replace(/"/g, '""') + '"').join(';'));
     });
     return '﻿' + L.join('\n');
@@ -6670,8 +6739,16 @@ function buildMarkdown() {
     L.push('');
     L.push('Индекс здоровья: **' + APP.health.total + ' / 100**');
     L.push('');
-    APP.health.cats.forEach(c => L.push('- ' + c + ': ' + APP.health.scores[c]));
+    APP.health.cats.forEach(c => L.push('- ' + c + ': ' + APP.health.scores[c] + ' / 100'));
     L.push('');
+    const срезано = cutSheets();
+    if (срезано.length) {
+        L.push('> **Отчёт неполон.** По ячейкам не разбирались листы: ' +
+            срезано.map(s => '**' + s.name + '** (' + fmtBytes(s.scanBytes) + ')').join(', ') +
+            ' — такой объём браузер не осилит. Ошибки в ячейках, разбор по колонкам и ссылки из ' +
+            'формул этих листов в отчёт не попали, поэтому строка «Ошибки» в индексе мягче, чем надо.');
+        L.push('');
+    }
 
     scopedBooks().forEach(b => {
         const p = b.props || {};
@@ -6694,7 +6771,9 @@ function buildMarkdown() {
         L.push('| Лист | Статус | Роль | Формул | Констант | Ошибок |');
         L.push('|---|---|---|---:|---:|---:|');
         b.sheets.forEach(s => L.push('| ' + s.name + ' | ' + s.state + ' | ' + (s.role || '—') + ' | ' +
-            (s.formulaCount || 0) + ' | ' + (s.constCount || 0) + ' | ' + (s.errorCount || 0) + ' |'));
+            (s.formulaCount || 0) + ' | ' +
+            (s.truncated ? 'н/д' : (s.constCount || 0)) + ' | ' +
+            (s.truncated ? 'н/д' : (s.errorCount || 0)) + ' |'));
         L.push('');
 
         if ((b.tables || []).length) {
@@ -7483,8 +7562,8 @@ function showNodeDetails(id, upSet, downSet, hosted, relUp, relDown) {
         kv.push(['Статус', n.state === 'visible' ? 'видимый' : n.state]);
         kv.push(['Роль', n.role || '—']);
         kv.push(['Формул', fmtNum(r.formulaCount)]);
-        kv.push(['Констант', fmtNum(r.constCount)]);
-        kv.push(['Ошибок', fmtNum(r.errorCount)]);
+        kv.push(['Констант', r.truncated ? 'не считалось' : fmtNum(r.constCount)]);
+        kv.push(['Ошибок', r.truncated ? 'не считалось' : fmtNum(r.errorCount)]);
         kv.push(['Диапазон', r.dimension || '—']);
     } else if (n.type === 'table') {
         kv.push(['Лист', r.sheet || '—']);
