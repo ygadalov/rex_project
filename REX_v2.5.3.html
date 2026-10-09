@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>REX v2.5.2 — реверс-инжиниринг книг Excel</title>
+<title>REX v2.5.3 — реверс-инжиниринг книг Excel</title>
 
 <!--
   ════════════════════════════════════════════════════════════════════════════
@@ -1785,7 +1785,7 @@ const FULL_FORMATS = new Set(['xlsx', 'xlsm', 'xltx', 'xltm']);
    подвал меню, паспорт книги, имена выгружаемых файлов.
    Не забудьте про <title> и .brand в разметке — они статические. */
 const APP_NAME = 'REX';
-const APP_VERSION = '2.5.2';
+const APP_VERSION = '2.5.3';
 
 const APP = {
     books: [],          // разобранные книги
@@ -2350,7 +2350,7 @@ function scanSheetXml(xml, sheet, sst) {
         // тысячах. null означает «не смотрели», и это видно.
         Object.assign(sheet, {
             cellCount: null, constCount: null, textCount: null, errorCount: null,
-            errKinds: null, errorCells: null,
+            errKinds: null, errorCells: null, badEmpty: null, badEmptyCells: null,
             refsOut: new Map(), tableRefs: new Map(), nameRefs: new Map(),
             extRefs: new Map(), useKinds: new Map(),
         });
@@ -2360,6 +2360,8 @@ function scanSheetXml(xml, sheet, sst) {
 
     const shared = new Map();            // si → текст общей формулы
     let i = 0, formulas = 0, consts = 0, texts = 0, errors = 0, cells = 0;
+    let badEmpty = 0;                    // пустые ячейки, помеченные как ошибочные
+    const badEmptyCells = [];
     const errKinds = new Map();
     const colStats = new Map();
     const colHeads = new Map();          // колонка → строка текста над формулами
@@ -2394,7 +2396,6 @@ function scanSheetXml(xml, sheet, sst) {
         const pos = rm ? parseCellRef(rm[1]) : null;
         const tm = /t="([a-z]+)"/.exec(attrs);
         const type = tm ? tm[1] : 'n';
-        cells++;
 
         // ── формула
         let fText = null;
@@ -2450,7 +2451,17 @@ function scanSheetXml(xml, sheet, sst) {
 
         // ── значение
         const vi = inner.indexOf('<v>');
-        if (type === 'e') {
+        if (type === 'e' && vi === -1 && fText == null) {
+            /* Ячейка объявлена ошибочной, но значения у неё нет — показывать
+               нечего, и Excel рисует её пустой. Так пишут выгрузки из 1С:
+               каждой пустой клетке в размеченном диапазоне ставится t="e".
+               Считать это ошибкой — врать: в книге из трёх листов так
+               набиралось три с половиной тысячи «ошибок» на пустом месте.
+               Запоминаем отдельно: читателю это знать полезно, потому что
+               на строгих читателях такая книга спотыкается. */
+            badEmpty++;
+            if (badEmptyCells.length < 200 && rm) badEmptyCells.push(rm[1]);
+        } else if (type === 'e') {
             const v = vi !== -1 ? unesc(inner.slice(vi + 3, inner.indexOf('</v>', vi))) : '#ERR';
             errors++; kind = 4;
             errKinds.set(v, (errKinds.get(v) || 0) + 1);
@@ -2459,6 +2470,10 @@ function scanSheetXml(xml, sheet, sst) {
             if (type === 's' || type === 'str' || type === 'inlineStr') { texts++; kind = 1; }
             else { consts++; kind = 2; }
         } else if (fText == null && inner.indexOf('<is>') !== -1) { texts++; kind = 1; }
+        /* Ячейка без значения, без формулы и без текста — это только оформление:
+           рамка, заливка, формат числа. Заполненной она не является, и в счёт
+           «заполнено N яч.» идти не должна. */
+        if (kind !== 0) cells++;
 
         // Заголовок колонки ищем среди текстовых ячеек в шапке листа
         if (kind === 1 && pos && pos.r < COL_HEADER_ROWS && sst && vi !== -1 && type === 's') {
@@ -2500,6 +2515,7 @@ function scanSheetXml(xml, sheet, sst) {
     Object.assign(sheet, {
         cellCount: cells, formulaCount: formulas, constCount: consts, textCount: texts,
         errorCount: errors, errKinds, colStats, refsOut, tableRefs, nameRefs, extRefs, funcs,
+        badEmpty, badEmptyCells,
         useKinds, invisible, wholeCol, errorCells, longest: longest.slice(0, 20),
         fx: fxOver ? null : fx, fxOver,
         rows: maxR, cols: maxC, heat: { w: hw, h: hh, data: heat },
@@ -3740,6 +3756,36 @@ function runAudit(books, graph) {
             desc: 'Формулы возвращают ошибку вместо значения.',
             why: 'Часть из них может быть «штатной» (#N/A в ВПР как маркер отсутствия), но каждая ошибка должна быть осознанной. Непойманная #DIV/0! в знаменателе отчёта — классика.',
             count: Array.from(errAgg.values()).reduce((a, b) => a + b, 0), items: errItems });
+
+        /* Пустые ячейки с типом «ошибка». Своё правило, а не строка в
+           cell-errors: это не ошибка расчёта, а брак выгрузки. Молчать о нём
+           тоже нельзя — строгий читатель на такой книге спотыкается. */
+        const beTotal = sheets.reduce((a, sh) => a + (sh.badEmpty || 0), 0);
+        if (beTotal) {
+            const beItems = [];
+            const beSheets = [];
+            sheets.forEach(sh => {
+                if (!sh.badEmpty) return;
+                beSheets.push(sh.name);
+                (sh.badEmptyCells || []).forEach(c => {
+                    if (beItems.length < 200) beItems.push({ loc: loc(sh.name, c), txt: 'пусто, но помечена как ошибка' });
+                });
+            });
+            add({ id: 'empty-err', category: 'Гигиена', severity: 'minor',
+                title: 'Пустые ячейки помечены как ошибочные: ' + fmtNum(beTotal),
+                desc: 'У ячейки стоит тип «ошибка», но значения нет. ' +
+                      'На листах: ' + beSheets.slice(0, 6).join(', ') +
+                      (beSheets.length > 6 ? ' и ещё ' + (beSheets.length - 6) : '') + '.',
+                why: 'В самом Excel это не видно: показывать нечего, и ячейка выглядит пустой. ' +
+                     'Так пишут выгрузки из учётных систем — 1С размечает весь диапазон отчёта и ' +
+                     'каждой незаполненной клетке ставит тип ошибки. Книге это не вредит, но любой ' +
+                     'читатель строже Excel — Power Query, pandas, импорт в базу — видит ошибку там, ' +
+                     'где её нет, и либо падает, либо тянет её дальше в расчёт. ' +
+                     'Лечится пересохранением: и Excel, и раздел «Конвертер» в самом REX перепишут ' +
+                     'такие ячейки как обычные пустые. Конвертер при этом теряет оформление — ' +
+                     'для папки-источника данных это не важно, для готового отчёта важно.',
+                count: beTotal, items: beItems });
+        }
 
         // Битые именованные диапазоны — тихий убийца.
         // Считаем только видимые: скрытые имена (hidden="1") не показывает даже
