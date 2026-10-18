@@ -44,9 +44,51 @@ module.exports = async function () {
          'у кнопки «скачать» есть атрибут download — иначе браузер покажет исходник текстом');
 
     t.раздел('Версия в тексте совпадает с версией файла');
-    const вТексте = await pg.evaluate(() => (document.body.innerText.match(/v\d+\.\d+\.\d+/) || [])[0]);
-    t.ok(вТексте === 'v' + текущее.replace(/^REX_v|\.html$/g, ''),
-         'подпись версии: ' + вТексте + ' при файле ' + текущее);
+    /* Версия на странице стоит не в одном месте: значок в шапке и строка
+       форматов под кнопками. Сверяем все вхождения — иначе при выпуске
+       поправят одно, забудут другое, и страница начнёт врать наполовину. */
+    const вТексте = await pg.evaluate(() => document.body.innerText.match(/v\d+\.\d+\.\d+/g) || []);
+    const ждём = 'v' + текущее.replace(/^REX_v|\.html$/g, '');
+    t.ok(вТексте.length >= 1, 'версия на странице названа: ' + вТексте.join(', '));
+    t.ok(вТексте.every(v => v === ждём),
+         'все вхождения версии — ' + ждём + ', нашли: ' + вТексте.join(', '));
+
+    t.раздел('Быстрый доступ к инструменту');
+    /* Жалоба была конкретной: аналитик, который уже знаком с REX, не должен
+       прокручивать страницу, чтобы открыть файл. До правки первая ссылка на
+       инструмент лежала в 3,6 экрана от верха, на телефоне — в 6,3. */
+    for (const ш of [1450, 390]) {
+        await pg.setViewportSize({ width: ш, height: 844 });
+        await pg.waitForTimeout(300);
+        const д = await pg.evaluate(() => {
+            const a = [...document.querySelectorAll('a[href$=".html"]')][0];
+            const r = a.getBoundingClientRect();
+            return { доКнопки: Math.round(r.top + scrollY), экран: innerHeight };
+        });
+        t.ok(д.доКнопки < д.экран,
+             ш + 'px: до первой ссылки на инструмент ' + д.доКнопки + 'px — меньше экрана');
+    }
+    const шапка = await pg.evaluate(() => {
+        const t = document.querySelector('.top');
+        const c = t.querySelector('.top-cta');
+        return { положение: getComputedStyle(t).position, естьКнопка: !!c,
+                 ведёт: c && c.getAttribute('href') };
+    });
+    t.ok(шапка.положение === 'sticky', 'шапка закреплена: ' + шапка.положение);
+    t.ok(шапка.естьКнопка && шапка.ведёт === текущее,
+         'в шапке есть кнопка на текущую версию: ' + шапка.ведёт);
+    // и она должна оставаться видимой, когда страницу прокрутили
+    await pg.setViewportSize({ width: 1450, height: 900 });
+    await pg.evaluate(() => { document.documentElement.style.scrollBehavior = 'auto'; scrollTo(0, 1500); });
+    await pg.waitForTimeout(400);
+    const послеПрокрутки = await pg.evaluate(() => {
+        const r = document.querySelector('.top .top-cta').getBoundingClientRect();
+        return { прокрутка: Math.round(scrollY), видна: r.top >= 0 && r.bottom <= innerHeight };
+    });
+    t.ok(послеПрокрутки.прокрутка > 500 && послеПрокрутки.видна,
+         'после прокрутки на ' + послеПрокрутки.прокрутка + 'px кнопка всё ещё видна');
+    await pg.evaluate(() => scrollTo(0, 0));
+    await pg.waitForTimeout(200);
 
     t.раздел('Разметка для ссылки и поиска');
     const мета = await pg.evaluate(() => ({
